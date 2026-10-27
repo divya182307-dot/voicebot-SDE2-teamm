@@ -1,0 +1,239 @@
+{
+  "$defs": {
+    "TranscriptError": {
+      "additionalProperties": false,
+      "description": "Structured error payload for speech recognition failures.\n\nFields:\n    code: Machine-readable error code string (e.g., 'AUDIO_TIMEOUT', 'PROVIDER_ERROR').\n    message: Human-readable error description.\n    details: Optional dictionary containing additional diagnostic context.",
+      "properties": {
+        "code": {
+          "description": "Machine-readable error identifier",
+          "minLength": 1,
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "description": "Human-readable error description",
+          "minLength": 1,
+          "title": "Message",
+          "type": "string"
+        },
+        "details": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Diagnostic attributes and context",
+          "title": "Details"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "TranscriptError",
+      "type": "object"
+    },
+    "TranscriptSegment": {
+      "additionalProperties": false,
+      "description": "Atomic unit of transcribed speech representing a phrase, sentence, or utterance.\n\nFields:\n    id: Unique identifier for the segment.\n    start_time_ms: Start offset in milliseconds from audio stream onset (unit: ms, ge: 0).\n    end_time_ms: End offset in milliseconds from audio stream onset (unit: ms, ge: 0).\n    text: Transcribed text content.\n    confidence: Normalized confidence score from speech recognizer (range: [0.0, 1.0]).\n    is_final: Flag indicating whether this segment is final (immutable) or interim (speculative).\n    language: BCP-47 / ISO language code (e.g. 'en', 'en-US', 'es', 'hi').\n    words: Optional list of word-level timings for sub-segment precision.",
+      "properties": {
+        "id": {
+          "description": "Unique identifier for the transcript segment",
+          "title": "Id",
+          "type": "string"
+        },
+        "start_time_ms": {
+          "description": "Start timestamp in milliseconds relative to audio stream start (unit: ms, constraint: >= 0)",
+          "minimum": 0,
+          "title": "Start Time Ms",
+          "type": "integer"
+        },
+        "end_time_ms": {
+          "description": "End timestamp in milliseconds relative to audio stream start (unit: ms, constraint: >= start_time_ms)",
+          "minimum": 0,
+          "title": "End Time Ms",
+          "type": "integer"
+        },
+        "text": {
+          "description": "Transcribed text string",
+          "title": "Text",
+          "type": "string"
+        },
+        "confidence": {
+          "description": "Confidence score assigned by STT engine (unit: normalized probability, constraint: [0.0, 1.0])",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "is_final": {
+          "default": false,
+          "description": "True if segment is finalized/locked; False if interim/speculative hypothesis",
+          "title": "Is Final",
+          "type": "boolean"
+        },
+        "language": {
+          "default": "en",
+          "description": "Language code compliant with ISO 639-1 / BCP-47 (e.g., 'en', 'en-US')",
+          "title": "Language",
+          "type": "string"
+        },
+        "words": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/WordTiming"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional list of word-level timing breakdown",
+          "title": "Words"
+        }
+      },
+      "required": [
+        "start_time_ms",
+        "end_time_ms",
+        "text",
+        "confidence"
+      ],
+      "title": "TranscriptSegment",
+      "type": "object"
+    },
+    "WordTiming": {
+      "additionalProperties": false,
+      "description": "Word-level timing information for synchronized visual rendering and highlighting.\n\nFields:\n    word: The spoken word token.\n    start_time_ms: Start offset from audio onset in milliseconds (>= 0).\n    end_time_ms: End offset from audio onset in milliseconds (>= start_time_ms).\n    confidence: Word transcription confidence score [0.0, 1.0].",
+      "properties": {
+        "word": {
+          "description": "Transcribed word token",
+          "minLength": 1,
+          "title": "Word",
+          "type": "string"
+        },
+        "start_time_ms": {
+          "description": "Start offset in milliseconds from audio start",
+          "minimum": 0,
+          "title": "Start Time Ms",
+          "type": "integer"
+        },
+        "end_time_ms": {
+          "description": "End offset in milliseconds from audio start",
+          "minimum": 0,
+          "title": "End Time Ms",
+          "type": "integer"
+        },
+        "confidence": {
+          "description": "Confidence score between 0.0 and 1.0",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        }
+      },
+      "required": [
+        "word",
+        "start_time_ms",
+        "end_time_ms",
+        "confidence"
+      ],
+      "title": "WordTiming",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Immutable snapshot representation of the accumulated transcript state.\n\nFields:\n    session_id: The session identifier.\n    final_segments: Ordered list of locked-in TranscriptSegments.\n    active_interim: Currently active speculative hypothesis (or None).\n    final_text: Concatenated text of all committed final segments.\n    full_text: Final text combined with the active interim text.\n    total_duration_ms: Total time span from first segment start to latest segment end.\n    average_confidence: Weighted average confidence of finalized segments.\n    word_count: Total word count in finalized segments.\n    speech_active: True if VAD currently detects active speech.\n    errors: List of any TranscriptErrors encountered during the session.",
+  "properties": {
+    "session_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Bound session identifier",
+      "title": "Session Id"
+    },
+    "final_segments": {
+      "description": "Committed segments",
+      "items": {
+        "$ref": "#/$defs/TranscriptSegment"
+      },
+      "title": "Final Segments",
+      "type": "array"
+    },
+    "active_interim": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TranscriptSegment"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Active speculative hypothesis"
+    },
+    "final_text": {
+      "default": "",
+      "description": "Joined final transcript text",
+      "title": "Final Text",
+      "type": "string"
+    },
+    "full_text": {
+      "default": "",
+      "description": "Full text including interim hypothesis",
+      "title": "Full Text",
+      "type": "string"
+    },
+    "total_duration_ms": {
+      "default": 0,
+      "description": "Span from earliest to latest segment in ms",
+      "minimum": 0,
+      "title": "Total Duration Ms",
+      "type": "integer"
+    },
+    "average_confidence": {
+      "default": 0.0,
+      "description": "Mean confidence score",
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Average Confidence",
+      "type": "number"
+    },
+    "word_count": {
+      "default": 0,
+      "description": "Count of words in finalized transcript",
+      "minimum": 0,
+      "title": "Word Count",
+      "type": "integer"
+    },
+    "speech_active": {
+      "default": false,
+      "description": "Whether speech turn is active",
+      "title": "Speech Active",
+      "type": "boolean"
+    },
+    "errors": {
+      "description": "Encountered errors",
+      "items": {
+        "$ref": "#/$defs/TranscriptError"
+      },
+      "title": "Errors",
+      "type": "array"
+    }
+  },
+  "title": "AccumulatedTranscript",
+  "type": "object"
+}

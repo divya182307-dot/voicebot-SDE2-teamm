@@ -1,0 +1,32 @@
+{
+  "additionalProperties": false,
+  "description": "Configuration settings for SegmentAccumulator behavior.\n\nFields:\n    enforce_session_id: If True, reject events from differing session IDs.\n    deduplicate_by_id: If True, ignore identical duplicate final segment IDs idempotently.\n    auto_sort: If True, automatically maintain final segments sorted by start_time_ms.\n    preserve_interim_on_speech_ended: If True, do not discard active interim on SPEECH_ENDED.",
+  "properties": {
+    "enforce_session_id": {
+      "default": true,
+      "description": "Reject events with mismatched session_id if accumulator is bound to a session",
+      "title": "Enforce Session Id",
+      "type": "boolean"
+    },
+    "deduplicate_by_id": {
+      "default": true,
+      "description": "Idempotently ignore duplicate final segment IDs rather than raising errors",
+      "title": "Deduplicate By Id",
+      "type": "boolean"
+    },
+    "auto_sort": {
+      "default": true,
+      "description": "Maintain segments in strict chronological order by start_time_ms",
+      "title": "Auto Sort",
+      "type": "boolean"
+    },
+    "preserve_interim_on_speech_ended": {
+      "default": false,
+      "description": "Whether to keep active interim hypothesis when SPEECH_ENDED arrives",
+      "title": "Preserve Interim On Speech Ended",
+      "type": "boolean"
+    }
+  },
+  "title": "AccumulatorConfig",
+  "type": "object"
+}

@@ -1,3 +1,1 @@
-"""
-Unit test suite for SDE-2 Voicebot Day 2 tasks.
-"""
+"""Test suite for the SDE-2 Voicebot, including STT module tests."""
