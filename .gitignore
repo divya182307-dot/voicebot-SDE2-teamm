@@ -1,12 +1,18 @@
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
+
+# Virtual environments
+.env
+.venv/
 env/
 venv/
-.venv/
 ENV/
+
+# Build and distribution
 build/
 develop-eggs/
 dist/
@@ -22,12 +28,21 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+
+# Testing and coverage
 .pytest_cache/
+
 .coverage
 htmlcov/
-.idea/
+.tox/
+
+# IDE and OS
 .vscode/
+.idea/
 *.swp
 *.swo
 .DS_Store
+Thumbs.db
+
+# Logs
 *.log

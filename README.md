@@ -309,3 +309,21 @@ print("Risk Level:", result.risk_level.value)
 print("Response:  ", result.agent_response_text)
 print("Confidence:", result.confidence_score)
 ```
+
+---
+
+## Workstream W4 – Agentic Workflow Engine
+
+**Contributor:** Karthik N M
+
+**Week 1 – Days 1–2**
+
+Implemented the foundational workflow engine components:
+
+- Pydantic schemas for workflow plans, steps, tool specifications, approval requests, and workflow results.
+- Seven-state workflow lifecycle state machine.
+- Schema validation and state-transition tests.
+
+**Source location:** `projects/sde-2-voicebot/src/workflow/`
+
+**Tests location:** `projects/sde-2-voicebot/tests/`
