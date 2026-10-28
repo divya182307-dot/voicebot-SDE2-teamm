@@ -1,0 +1,38 @@
+{
+  "additionalProperties": false,
+  "description": "Structured error payload for speech recognition failures.\n\nFields:\n    code: Machine-readable error code string (e.g., 'AUDIO_TIMEOUT', 'PROVIDER_ERROR').\n    message: Human-readable error description.\n    details: Optional dictionary containing additional diagnostic context.",
+  "properties": {
+    "code": {
+      "description": "Machine-readable error identifier",
+      "minLength": 1,
+      "title": "Code",
+      "type": "string"
+    },
+    "message": {
+      "description": "Human-readable error description",
+      "minLength": 1,
+      "title": "Message",
+      "type": "string"
+    },
+    "details": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Diagnostic attributes and context",
+      "title": "Details"
+    }
+  },
+  "required": [
+    "code",
+    "message"
+  ],
+  "title": "TranscriptError",
+  "type": "object"
+}

@@ -1,0 +1,247 @@
+{
+  "$defs": {
+    "TranscriptError": {
+      "additionalProperties": false,
+      "description": "Structured error payload for speech recognition failures.\n\nFields:\n    code: Machine-readable error code string (e.g., 'AUDIO_TIMEOUT', 'PROVIDER_ERROR').\n    message: Human-readable error description.\n    details: Optional dictionary containing additional diagnostic context.",
+      "properties": {
+        "code": {
+          "description": "Machine-readable error identifier",
+          "minLength": 1,
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "description": "Human-readable error description",
+          "minLength": 1,
+          "title": "Message",
+          "type": "string"
+        },
+        "details": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Diagnostic attributes and context",
+          "title": "Details"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "TranscriptError",
+      "type": "object"
+    },
+    "TranscriptEventType": {
+      "description": "Enumeration of transcript event types emitted during streaming speech processing.",
+      "enum": [
+        "speech_started",
+        "interim_transcript",
+        "final_transcript",
+        "speech_ended",
+        "error"
+      ],
+      "title": "TranscriptEventType",
+      "type": "string"
+    },
+    "TranscriptSegment": {
+      "additionalProperties": false,
+      "description": "Atomic unit of transcribed speech representing a phrase, sentence, or utterance.\n\nFields:\n    id: Unique identifier for the segment.\n    start_time_ms: Start offset in milliseconds from audio stream onset (unit: ms, ge: 0).\n    end_time_ms: End offset in milliseconds from audio stream onset (unit: ms, ge: 0).\n    text: Transcribed text content.\n    confidence: Normalized confidence score from speech recognizer (range: [0.0, 1.0]).\n    is_final: Flag indicating whether this segment is final (immutable) or interim (speculative).\n    language: BCP-47 / ISO language code (e.g. 'en', 'en-US', 'es', 'hi').\n    words: Optional list of word-level timings for sub-segment precision.",
+      "properties": {
+        "id": {
+          "description": "Unique identifier for the transcript segment",
+          "title": "Id",
+          "type": "string"
+        },
+        "start_time_ms": {
+          "description": "Start timestamp in milliseconds relative to audio stream start (unit: ms, constraint: >= 0)",
+          "minimum": 0,
+          "title": "Start Time Ms",
+          "type": "integer"
+        },
+        "end_time_ms": {
+          "description": "End timestamp in milliseconds relative to audio stream start (unit: ms, constraint: >= start_time_ms)",
+          "minimum": 0,
+          "title": "End Time Ms",
+          "type": "integer"
+        },
+        "text": {
+          "description": "Transcribed text string",
+          "title": "Text",
+          "type": "string"
+        },
+        "confidence": {
+          "description": "Confidence score assigned by STT engine (unit: normalized probability, constraint: [0.0, 1.0])",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "is_final": {
+          "default": false,
+          "description": "True if segment is finalized/locked; False if interim/speculative hypothesis",
+          "title": "Is Final",
+          "type": "boolean"
+        },
+        "language": {
+          "default": "en",
+          "description": "Language code compliant with ISO 639-1 / BCP-47 (e.g., 'en', 'en-US')",
+          "title": "Language",
+          "type": "string"
+        },
+        "words": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/WordTiming"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional list of word-level timing breakdown",
+          "title": "Words"
+        }
+      },
+      "required": [
+        "start_time_ms",
+        "end_time_ms",
+        "text",
+        "confidence"
+      ],
+      "title": "TranscriptSegment",
+      "type": "object"
+    },
+    "WordTiming": {
+      "additionalProperties": false,
+      "description": "Word-level timing information for synchronized visual rendering and highlighting.\n\nFields:\n    word: The spoken word token.\n    start_time_ms: Start offset from audio onset in milliseconds (>= 0).\n    end_time_ms: End offset from audio onset in milliseconds (>= start_time_ms).\n    confidence: Word transcription confidence score [0.0, 1.0].",
+      "properties": {
+        "word": {
+          "description": "Transcribed word token",
+          "minLength": 1,
+          "title": "Word",
+          "type": "string"
+        },
+        "start_time_ms": {
+          "description": "Start offset in milliseconds from audio start",
+          "minimum": 0,
+          "title": "Start Time Ms",
+          "type": "integer"
+        },
+        "end_time_ms": {
+          "description": "End offset in milliseconds from audio start",
+          "minimum": 0,
+          "title": "End Time Ms",
+          "type": "integer"
+        },
+        "confidence": {
+          "description": "Confidence score between 0.0 and 1.0",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        }
+      },
+      "required": [
+        "word",
+        "start_time_ms",
+        "end_time_ms",
+        "confidence"
+      ],
+      "title": "WordTiming",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Canonical event payload emitted over the voice pipeline message bus / WebSockets.\n\nFields:\n    event_id: Unique event tracking ID.\n    session_id: Client interaction session ID.\n    event_type: The type of event (SPEECH_STARTED, INTERIM_TRANSCRIPT, etc.).\n    timestamp: UTC timestamp of event generation.\n    segment: Associated TranscriptSegment (required for INTERIM_TRANSCRIPT and FINAL_TRANSCRIPT).\n    error: Associated TranscriptError (required when event_type is ERROR).\n    sequence_number: Optional sequential message counter for ordering verification.\n    metadata: Optional dictionary with custom provider or client attributes.",
+  "properties": {
+    "event_id": {
+      "description": "Globally unique identifier for this event",
+      "title": "Event Id",
+      "type": "string"
+    },
+    "session_id": {
+      "description": "Session identifier correlating user requests",
+      "minLength": 1,
+      "title": "Session Id",
+      "type": "string"
+    },
+    "event_type": {
+      "$ref": "#/$defs/TranscriptEventType",
+      "description": "Classification of the transcript event"
+    },
+    "timestamp": {
+      "description": "ISO-8601 UTC timestamp of event creation",
+      "format": "date-time",
+      "title": "Timestamp",
+      "type": "string"
+    },
+    "segment": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TranscriptSegment"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Transcript segment payload for interim and final events"
+    },
+    "error": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TranscriptError"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Error details payload for error events"
+    },
+    "sequence_number": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Sequential index of the event within the stream",
+      "title": "Sequence Number"
+    },
+    "metadata": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Extensible metadata dictionary for provider diagnostics or telemetry",
+      "title": "Metadata"
+    }
+  },
+  "required": [
+    "session_id",
+    "event_type"
+  ],
+  "title": "TranscriptEvent",
+  "type": "object"
+}
