@@ -164,13 +164,34 @@ class WorkflowPlan(BaseModel):
                 raise ValueError(f"Duplicate step_id detected in plan: {step.step_id}")
             step_ids.add(step.step_id)
 
-        # Validate dependency references
+        # Validate dependency references and self-dependency
         for step in self.steps:
             for dep in step.depends_on:
                 if dep not in step_ids:
                     raise ValueError(f"Step '{step.step_id}' depends on non-existent step '{dep}'")
                 if dep == step.step_id:
                     raise ValueError(f"Step '{step.step_id}' cannot depend on itself")
+
+        # Dependency cycle detection (DFS)
+        visit_state: Dict[str, int] = {}  # 0: unvisited, 1: visiting, 2: visited
+        adj = {s.step_id: s.depends_on for s in self.steps}
+
+        def dfs_has_cycle(node: str) -> bool:
+            visit_state[node] = 1
+            for neighbor in adj.get(node, []):
+                state = visit_state.get(neighbor, 0)
+                if state == 1:
+                    return True
+                if state == 0 and dfs_has_cycle(neighbor):
+                    return True
+            visit_state[node] = 2
+            return False
+
+        for s in self.steps:
+            if visit_state.get(s.step_id, 0) == 0:
+                if dfs_has_cycle(s.step_id):
+                    raise ValueError(f"Cyclic dependency detected involving step '{s.step_id}'")
+
         return self
 
 
