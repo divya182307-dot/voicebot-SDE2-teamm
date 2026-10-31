@@ -23,9 +23,8 @@ from src.workflow.state_machine import (
 )
 from src.workflow.tools import (
     BaseTool,
+    MockCourseScheduleTool,
     MockKnowledgeSearchTool,
-    MockNotificationTool,
-    MockStudentRecordUpdateTool,
     ToolRegistry,
 )
 from src.workflow.executor import (
@@ -52,8 +51,7 @@ __all__ = [
     # Tools
     "BaseTool",
     "MockKnowledgeSearchTool",
-    "MockNotificationTool",
-    "MockStudentRecordUpdateTool",
+    "MockCourseScheduleTool",
     "ToolRegistry",
     # Executor
     "WorkflowExecutor",
