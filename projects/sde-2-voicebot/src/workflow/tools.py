@@ -4,7 +4,7 @@ Workstream: W4 (Agentic Workflow) - Team SDE 2
 Author: Karthik N M
 
 Day 3-4 Deliverable:
-Provides harmless mock tools, consequential action mock tools, and a ToolRegistry.
+Provides two harmless mock tools with no external sending, and a ToolRegistry.
 Everything runs in mock mode (safe, deterministic, sandboxed execution).
 """
 
@@ -156,107 +156,114 @@ class MockKnowledgeSearchTool(BaseTool):
         }
 
 
-class MockNotificationTool(BaseTool):
+class MockCourseScheduleTool(BaseTool):
     """
-    Harmless Mock Tool 2: Notification Tool.
-    Risk Level: LOW_RISK (harmless communication dispatch).
-    Dispatches mock SMS, email, or in-app notifications.
+    Harmless Mock Tool 2: Course Schedule Lookup Tool.
+    Risk Level: INFORMATIONAL (harmless read-only schedule lookup).
+    Queries course timings, classroom assignments, and instructor info.
+    Operates strictly locally in mock mode with no external sending.
     """
 
     def __init__(self):
         spec = ToolSpec(
-            name="send_notification",
-            purpose="Sends automated mock notifications and alerts to students or faculty via SMS/Email.",
+            name="course_schedule",
+            purpose="Retrieves course schedules, lecture timings, classroom locations, and instructor details.",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "recipient": {"type": "string", "description": "Student email or user identifier"},
-                    "message": {"type": "string", "description": "Notification content body"},
-                    "channel": {"type": "string", "description": "Channel: email, sms, in_app", "default": "email"},
+                    "course_code": {
+                        "type": "string",
+                        "description": "Academic course code (e.g., CS101, MATH201, PHY101)",
+                    },
+                    "term": {
+                        "type": "string",
+                        "description": "Academic term or semester (e.g., Fall 2026, Spring 2027)",
+                        "default": "Fall 2026",
+                    },
                 },
-                "required": ["recipient", "message"],
+                "required": ["course_code"],
             },
             output_schema={
                 "type": "object",
                 "properties": {
-                    "notification_id": {"type": "string"},
-                    "recipient": {"type": "string"},
-                    "delivered": {"type": "boolean"},
+                    "course_code": {"type": "string"},
+                    "course_name": {"type": "string"},
+                    "term": {"type": "string"},
+                    "instructor": {"type": "string"},
+                    "schedule": {"type": "string"},
+                    "location": {"type": "string"},
+                    "credits": {"type": "integer"},
                     "mock_mode": {"type": "boolean"},
                 },
             },
-            permission_requirements=["notification:send"],
-            risk_level=RiskLevel.LOW_RISK,
-            failure_behavior=ToolFailureBehavior.RETRY,
-        )
-        super().__init__(spec)
-
-    def execute(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
-        self.validate_arguments(arguments)
-        recipient = arguments.get("recipient")
-        message = arguments.get("message")
-        channel = arguments.get("channel", "email")
-
-        notification_id = f"notif-{uuid4().hex[:8]}"
-
-        return {
-            "status": "success",
-            "notification_id": notification_id,
-            "recipient": recipient,
-            "channel": channel,
-            "message_snippet": message[:50] + ("..." if len(message) > 50 else ""),
-            "delivered": True,
-            "mock_mode": True,
-            "sent_at": datetime.now(timezone.utc).isoformat(),
-        }
-
-
-class MockStudentRecordUpdateTool(BaseTool):
-    """
-    Consequential Mock Tool: Student Record Update Tool.
-    Risk Level: SENSITIVE (consequential state-changing operation).
-    Used to demonstrate approval-gated workflows.
-    Must always default to awaiting approval before execution.
-    """
-
-    def __init__(self):
-        spec = ToolSpec(
-            name="update_student_record",
-            purpose="Modifies student grades, enrollment status, or academic records in Student Information System (SIS).",
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "student_id": {"type": "string", "description": "Student ID number"},
-                    "field": {"type": "string", "description": "Record field (e.g., status, major, grade)"},
-                    "new_value": {"type": "string", "description": "Target new value"},
-                },
-                "required": ["student_id", "field", "new_value"],
-            },
-            output_schema={
-                "type": "object",
-                "properties": {
-                    "student_id": {"type": "string"},
-                    "field": {"type": "string"},
-                    "new_value": {"type": "string"},
-                    "updated": {"type": "boolean"},
-                },
-            },
-            permission_requirements=["sis:write", "admin:approval"],
-            risk_level=RiskLevel.SENSITIVE,
+            permission_requirements=["schedule:read"],
+            risk_level=RiskLevel.INFORMATIONAL,
             failure_behavior=ToolFailureBehavior.FAIL_WORKFLOW,
         )
         super().__init__(spec)
 
+        self._schedules = {
+            "CS101": {
+                "course_name": "Introduction to Computer Science",
+                "instructor": "Dr. Alan Turing",
+                "schedule": "Mondays and Wednesdays 10:00 AM - 11:30 AM",
+                "location": "Turing Hall, Room 101",
+                "credits": 4,
+            },
+            "MATH201": {
+                "course_name": "Linear Algebra & Differential Equations",
+                "instructor": "Dr. Katherine Johnson",
+                "schedule": "Tuesdays and Thursdays 02:00 PM - 03:30 PM",
+                "location": "Euler Building, Room 204",
+                "credits": 3,
+            },
+            "PHY101": {
+                "course_name": "General Physics I",
+                "instructor": "Dr. Richard Feynman",
+                "schedule": "Fridays 09:00 AM - 12:00 PM",
+                "location": "Newton Science Complex, Lab B",
+                "credits": 4,
+            },
+            "BIO110": {
+                "course_name": "Fundamentals of Molecular Biology",
+                "instructor": "Dr. Rosalind Franklin",
+                "schedule": "Mondays and Wednesdays 01:00 PM - 02:30 PM",
+                "location": "Darwin Life Sciences, Room 105",
+                "credits": 3,
+            },
+        }
+
     def execute(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
         self.validate_arguments(arguments)
+        course_code = str(arguments.get("course_code", "")).strip().upper()
+        term = str(arguments.get("term", "Fall 2026"))
+
+        if course_code in self._schedules:
+            entry = self._schedules[course_code]
+            return {
+                "status": "success",
+                "course_code": course_code,
+                "course_name": entry["course_name"],
+                "term": term,
+                "instructor": entry["instructor"],
+                "schedule": entry["schedule"],
+                "location": entry["location"],
+                "credits": entry["credits"],
+                "mock_mode": True,
+                "retrieved_at": datetime.now(timezone.utc).isoformat(),
+            }
+
         return {
             "status": "success",
-            "student_id": arguments.get("student_id"),
-            "field": arguments.get("field"),
-            "new_value": arguments.get("new_value"),
-            "updated": True,
+            "course_code": course_code,
+            "course_name": f"Course {course_code}",
+            "term": term,
+            "instructor": "Staff",
+            "schedule": "TBD - Consult Department Office",
+            "location": "Main Campus",
+            "credits": 3,
             "mock_mode": True,
-            "executed_at": datetime.now(timezone.utc).isoformat(),
+            "retrieved_at": datetime.now(timezone.utc).isoformat(),
         }
 
 
@@ -296,13 +303,12 @@ class ToolRegistry:
     @classmethod
     def get_default_registry(cls) -> "ToolRegistry":
         """
-        Creates and returns a registry populated with the default mock tools:
-        - MockKnowledgeSearchTool (Harmless / Informational)
-        - MockNotificationTool (Harmless / Low Risk)
-        - MockStudentRecordUpdateTool (Consequential / Sensitive)
+        Creates and returns a registry populated with the two harmless mock tools:
+        - MockKnowledgeSearchTool (Harmless / Informational read-only knowledge query)
+        - MockCourseScheduleTool (Harmless / Informational read-only schedule lookup)
+        No external sending tools are included.
         """
         registry = cls()
         registry.register(MockKnowledgeSearchTool())
-        registry.register(MockNotificationTool())
-        registry.register(MockStudentRecordUpdateTool())
+        registry.register(MockCourseScheduleTool())
         return registry

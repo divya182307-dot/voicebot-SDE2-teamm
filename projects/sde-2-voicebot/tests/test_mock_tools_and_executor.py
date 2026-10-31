@@ -22,9 +22,8 @@ from src.workflow.schemas import (
 )
 from src.workflow.tools import (
     BaseTool,
+    MockCourseScheduleTool,
     MockKnowledgeSearchTool,
-    MockNotificationTool,
-    MockStudentRecordUpdateTool,
     ToolRegistry,
 )
 from src.workflow.executor import WorkflowExecutor
@@ -54,51 +53,58 @@ def test_mock_knowledge_search_tool_missing_arg_raises():
         tool.execute({})
 
 
-def test_mock_notification_tool_happy_path():
-    tool = MockNotificationTool()
-    assert tool.name == "send_notification"
-    assert tool.risk_level == RiskLevel.LOW_RISK
+def test_mock_course_schedule_tool_happy_path():
+    tool = MockCourseScheduleTool()
+    assert tool.name == "course_schedule"
+    assert tool.risk_level == RiskLevel.INFORMATIONAL
     assert tool.is_consequential is False
 
-    result = tool.execute({
-        "recipient": "student@university.edu",
-        "message": "Your registration is confirmed.",
-        "channel": "email",
-    })
+    result = tool.execute({"course_code": "CS101"})
     assert result["status"] == "success"
-    assert result["delivered"] is True
+    assert result["course_code"] == "CS101"
     assert result["mock_mode"] is True
-    assert result["recipient"] == "student@university.edu"
+    assert "Alan Turing" in result["instructor"]
+    assert "Turing Hall" in result["location"]
 
 
-def test_mock_notification_tool_missing_arg_raises():
-    tool = MockNotificationTool()
-    with pytest.raises(ValueError, match="missing required argument: 'message'"):
-        tool.execute({"recipient": "test@test.com"})
+def test_mock_course_schedule_tool_missing_arg_raises():
+    tool = MockCourseScheduleTool()
+    with pytest.raises(ValueError, match="missing required argument: 'course_code'"):
+        tool.execute({})
 
 
-def test_mock_student_record_update_tool_is_consequential():
-    tool = MockStudentRecordUpdateTool()
-    assert tool.name == "update_student_record"
+def test_mock_tools_harmless_and_consequential_behavior():
+    # Verify that the two default mock tools are harmless with no external sending
+    search_tool = MockKnowledgeSearchTool()
+    schedule_tool = MockCourseScheduleTool()
+    assert search_tool.is_consequential is False
+    assert schedule_tool.is_consequential is False
+
+    # Verify consequential behavior logic using a test consequential BaseTool
+    class DummySensitiveTool(BaseTool):
+        def __init__(self):
+            super().__init__(
+                ToolSpec(
+                    name="dummy_sensitive",
+                    purpose="Dummy tool for testing consequential classification",
+                    risk_level=RiskLevel.SENSITIVE,
+                )
+            )
+
+        def execute(self, arguments):
+            return {"status": "success"}
+
+    tool = DummySensitiveTool()
+    assert tool.name == "dummy_sensitive"
     assert tool.risk_level == RiskLevel.SENSITIVE
     assert tool.is_consequential is True
-
-    result = tool.execute({
-        "student_id": "STU-9921",
-        "field": "enrollment_status",
-        "new_value": "ACTIVE",
-    })
-    assert result["status"] == "success"
-    assert result["updated"] is True
-    assert result["mock_mode"] is True
 
 
 def test_tool_registry():
     registry = ToolRegistry.get_default_registry()
     assert registry.has("knowledge_search")
-    assert registry.has("send_notification")
-    assert registry.has("update_student_record")
-    assert len(registry.list_tools()) == 3
+    assert registry.has("course_schedule")
+    assert len(registry.list_tools()) == 2
 
     # Duplicate registration raises error
     with pytest.raises(ValueError, match="already registered"):
@@ -124,16 +130,16 @@ def test_executor_harmless_workflow_runs_to_succeeded():
     )
     step2 = WorkflowStep(
         step_id="step-2",
-        tool_name="send_notification",
-        arguments={"recipient": "karthik@student.edu", "message": "Add/drop ends Friday."},
-        description="Notify student",
+        tool_name="course_schedule",
+        arguments={"course_code": "CS101"},
+        description="Lookup course schedule",
         depends_on=["step-1"],
-        risk_level=RiskLevel.LOW_RISK,
+        risk_level=RiskLevel.INFORMATIONAL,
     )
     plan = WorkflowPlan(
         session_id="sess-001",
         correlation_id="corr-001",
-        title="Student Deadline Notification Workflow",
+        title="Student Deadline and Course Schedule Workflow",
         steps=[step1, step2],
     )
 
@@ -147,7 +153,7 @@ def test_executor_harmless_workflow_runs_to_succeeded():
     assert "step-1" in result.step_results
     assert "step-2" in result.step_results
     assert result.step_results["step-1"]["count"] > 0
-    assert result.step_results["step-2"]["delivered"] is True
+    assert result.step_results["step-2"]["course_code"] == "CS101"
     assert step1.status == StepStatus.SUCCEEDED
     assert step2.status == StepStatus.SUCCEEDED
 
@@ -163,16 +169,16 @@ def test_executor_consequential_action_pauses_for_approval():
     )
     step2 = WorkflowStep(
         step_id="step-2",
-        tool_name="update_student_record",
-        arguments={"student_id": "STU-883", "field": "financial_hold", "new_value": "CLEARED"},
-        description="Clear student financial hold",
+        tool_name="course_schedule",
+        arguments={"course_code": "CS101"},
+        description="Access restricted exam schedule",
         risk_level=RiskLevel.SENSITIVE,  # Auto-requires approval
         depends_on=["step-1"],
     )
     plan = WorkflowPlan(
         session_id="sess-conseq-1",
         correlation_id="corr-conseq-1",
-        title="Tuition Clearance Workflow",
+        title="Restricted Course Schedule Workflow",
         steps=[step1, step2],
     )
 
@@ -198,22 +204,22 @@ def test_executor_consequential_action_pauses_for_approval():
     assert final_result.final_state == WorkflowState.SUCCEEDED
     assert executor.current_state == WorkflowState.SUCCEEDED
     assert step2.status == StepStatus.SUCCEEDED
-    assert final_result.step_results["step-2"]["updated"] is True
+    assert final_result.step_results["step-2"]["course_code"] == "CS101"
 
 
 def test_executor_consequential_action_rejected_cancels_workflow():
     """Rejecting a consequential approval request halts workflow and transitions to CANCELLED."""
     step = WorkflowStep(
         step_id="step-conseq",
-        tool_name="update_student_record",
-        arguments={"student_id": "STU-999", "field": "grade", "new_value": "A+"},
-        description="Alter final grade",
+        tool_name="course_schedule",
+        arguments={"course_code": "CS101"},
+        description="Unauthorized schedule override",
         risk_level=RiskLevel.DESTRUCTIVE,
     )
     plan = WorkflowPlan(
         session_id="sess-reject",
         correlation_id="corr-reject",
-        title="Grade Alteration Workflow",
+        title="Unauthorized Schedule Override Workflow",
         steps=[step],
     )
 
@@ -223,12 +229,12 @@ def test_executor_consequential_action_rejected_cancels_workflow():
     assert executor.current_state == WorkflowState.AWAITING_APPROVAL
 
     approval_id = list(executor.pending_approvals.keys())[0]
-    final_result = executor.reject_request(approval_id, reason="Unauthorized grade modification attempt")
+    final_result = executor.reject_request(approval_id, reason="Unauthorized schedule modification attempt")
 
     assert final_result.final_state == WorkflowState.CANCELLED
     assert executor.current_state == WorkflowState.CANCELLED
     assert step.status == StepStatus.CANCELLED
-    assert "Unauthorized grade modification" in step.error_message
+    assert "Unauthorized schedule modification attempt" in step.error_message
 
 
 def test_executor_pause_and_resume():

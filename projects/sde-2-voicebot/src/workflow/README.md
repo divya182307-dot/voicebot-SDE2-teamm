@@ -12,7 +12,7 @@ This repository delivers the complete foundation and vertical slice of the agent
 
 1. **Typed Workflow Schemas (Days 1–2):** Single-source schemas defined in `src/workflow/schemas.py` (`WorkflowPlan`, `WorkflowStep`, `ToolSpec`, `ApprovalRequest`, `WorkflowResult`).
 2. **Deterministic State Machine (Days 1–2):** Enforces lifecycle transitions (`draft`, `awaiting_approval`, `running`, `paused`, `succeeded`, `failed`, `cancelled`) with full audit history in `src/workflow/state_machine.py`.
-3. **Mock Tools & Consequential Actions (Days 3–4):** Implements two harmless mock tools (`MockKnowledgeSearchTool`, `MockNotificationTool`), a consequential mock tool (`MockStudentRecordUpdateTool`), and a safe `ToolRegistry` in `src/workflow/tools.py`.
+3. **Mock Tools (Days 3–4):** Implements two harmless mock tools (`MockKnowledgeSearchTool`, `MockCourseScheduleTool`) with no external sending, and a safe `ToolRegistry` in `src/workflow/tools.py`.
 4. **Agentic Executor (Days 3–4):** Orchestrates step execution in mock mode with a mandatory safety gate where sensitive/destructive actions automatically default to awaiting human approval in `src/workflow/executor.py`.
 5. **Comprehensive Tests (Days 5–6):** 35 unit tests validating invalid plans (cycles, missing dependencies, duplicate IDs), illegal and legal state transitions, and executor behavior in `tests/`.
 6. **Live Demonstration & PR (Day 7):** Runnable demonstration script (`demo.py`) executing all execution paths from start to finish.
@@ -31,7 +31,7 @@ projects/sde-2-voicebot/
 │       ├── __init__.py                         # Package exports
 │       ├── schemas.py                          # Pydantic schemas (D1-2)
 │       ├── state_machine.py                    # State machine & transition rules (D1-2)
-│       ├── tools.py                            # Harmless & consequential mock tools (D3-4)
+│       ├── tools.py                            # Two harmless mock tools & ToolRegistry (D3-4)
 │       ├── executor.py                         # Agentic execution engine (D3-4)
 │       └── README.md                           # Documentation & test report
 └── tests/
@@ -89,20 +89,19 @@ stateDiagram-v2
 
 ## 5. Mock Tools & Executor (`src/workflow/tools.py` & `src/workflow/executor.py`)
 
+The workflow engine includes **two harmless mock tools** with **no external sending** (safe, sandboxed, deterministic execution):
+
 ### 1. `MockKnowledgeSearchTool` (Harmless)
+* **Tool Name:** `knowledge_search`
 * **Risk Level:** `INFORMATIONAL`
 * **Purpose:** Semantic query across course catalog, schedule, and institutional policies.
-* **Execution:** Returns matching knowledge items without state mutations.
+* **Execution:** Returns matching knowledge items without state mutations or external dispatch.
 
-### 2. `MockNotificationTool` (Harmless)
-* **Risk Level:** `LOW_RISK`
-* **Purpose:** Sends mock SMS, email, or in-app alerts to users.
-* **Execution:** Safely simulates dispatch with mock delivery IDs.
-
-### 3. `MockStudentRecordUpdateTool` (Consequential)
-* **Risk Level:** `SENSITIVE`
-* **Purpose:** Updates grades, enrollments, or financial holds in the Student Information System.
-* **Execution Policy:** Triggers mandatory `ApprovalRequest`. The executor halts execution until approval is confirmed.
+### 2. `MockCourseScheduleTool` (Harmless)
+* **Tool Name:** `course_schedule`
+* **Risk Level:** `INFORMATIONAL`
+* **Purpose:** Retrieves class timetables, lecture locations, professor office hours, and recitation times for courses.
+* **Execution:** Safely queries local mock schedule data with no external sending.
 
 ---
 
@@ -129,9 +128,9 @@ tests/test_invalid_plans_and_transitions.py::test_state_machine_terminal_states_
 tests/test_invalid_plans_and_transitions.py::test_state_machine_audit_trail_logging PASSED [ 34%]
 tests/test_mock_tools_and_executor.py::test_mock_knowledge_search_tool_happy_path PASSED  [ 37%]
 tests/test_mock_tools_and_executor.py::test_mock_knowledge_search_tool_missing_arg_raises PASSED [ 40%]
-tests/test_mock_tools_and_executor.py::test_mock_notification_tool_happy_path PASSED      [ 42%]
-tests/test_mock_tools_and_executor.py::test_mock_notification_tool_missing_arg_raises PASSED [ 45%]
-tests/test_mock_tools_and_executor.py::test_mock_student_record_update_tool_is_consequential PASSED [ 48%]
+tests/test_mock_tools_and_executor.py::test_mock_course_schedule_tool_happy_path PASSED   [ 42%]
+tests/test_mock_tools_and_executor.py::test_mock_course_schedule_tool_missing_arg_raises PASSED [ 45%]
+tests/test_mock_tools_and_executor.py::test_mock_tools_harmless_and_consequential_behavior PASSED [ 48%]
 tests/test_mock_tools_and_executor.py::test_tool_registry PASSED                           [ 51%]
 tests/test_mock_tools_and_executor.py::test_executor_harmless_workflow_runs_to_succeeded PASSED [ 54%]
 tests/test_mock_tools_and_executor.py::test_executor_consequential_action_pauses_for_approval PASSED [ 57%]
@@ -160,16 +159,16 @@ tests/test_workflow_schemas_and_sm.py::test_state_machine_invalid_transition_rai
 
 Run the live demo script:
 ```bash
-python demo.py
+python projects/sde-2-voicebot/demo.py
 ```
 
 ### Demonstrated Execution Scenarios:
 1. **Scenario 1 (Harmless Automated Plan):**
-   * Steps: `knowledge_search` -> `send_notification`.
+   * Steps: `knowledge_search` -> `course_schedule`.
    * Transitions: `draft` -> `running` -> `succeeded`.
 2. **Scenario 2 (Consequential Plan with Approval Granted):**
-   * Steps: `knowledge_search` -> `update_student_record`.
+   * Steps: `knowledge_search` -> `course_schedule` (Access restricted exam schedule: Sensitive).
    * Transitions: `draft` -> `running` -> `awaiting_approval` -> (Approval Granted) -> `running` -> `succeeded`.
 3. **Scenario 3 (Consequential Plan with Approval Rejected):**
-   * Steps: `update_student_record` (Destructive/Unauthorized).
+   * Steps: `course_schedule` (Unauthorized schedule override: Destructive).
    * Transitions: `draft` -> `running` -> `awaiting_approval` -> (Approval Rejected) -> `cancelled`.

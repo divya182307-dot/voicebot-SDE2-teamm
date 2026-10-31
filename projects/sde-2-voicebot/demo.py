@@ -27,27 +27,26 @@ def print_separator(title: str):
 
 def demo_harmless_workflow():
     print_separator("Scenario 1: Harmless Automated Workflow")
-    print("Objective: Read-only course search followed by harmless notification dispatch.")
+    print("Objective: Read-only course search followed by harmless course schedule lookup.")
     print("Expected behavior: Runs through to SUCCEEDED without pausing for approval.\n")
 
     step1 = WorkflowStep(
         step_id="step-01",
         tool_name="knowledge_search",
         arguments={"query": "cs101 schedule", "max_results": 2},
-        description="Search syllabus and lecture timing for CS101",
+        description="Search syllabus and course information for CS101",
         risk_level=RiskLevel.INFORMATIONAL,
     )
     step2 = WorkflowStep(
         step_id="step-02",
-        tool_name="send_notification",
+        tool_name="course_schedule",
         arguments={
-            "recipient": "karthik.nm@university.edu",
-            "message": "CS101 lectures are on Mon & Wed at 10 AM.",
-            "channel": "email",
+            "course_code": "CS101",
+            "term": "Fall 2026",
         },
-        description="Send lecture schedule email to student",
+        description="Lookup classroom and lecture timetable for CS101",
         depends_on=["step-01"],
-        risk_level=RiskLevel.LOW_RISK,
+        risk_level=RiskLevel.INFORMATIONAL,
     )
 
     plan = WorkflowPlan(
@@ -75,21 +74,21 @@ def demo_harmless_workflow():
 
 def demo_consequential_workflow_approved():
     print_separator("Scenario 2: Consequential Workflow (Approval Granted)")
-    print("Objective: Look up student fee status and clear financial hold (SENSITIVE action).")
+    print("Objective: Query policy and request access to restricted examination schedule (SENSITIVE action).")
     print("Expected behavior: Executor pauses in AWAITING_APPROVAL; resumes and SUCCEEDS upon approval.\n")
 
     step1 = WorkflowStep(
         step_id="step-01",
         tool_name="knowledge_search",
-        arguments={"query": "tuition payment"},
-        description="Query tuition fee status",
+        arguments={"query": "exam policy"},
+        description="Query university exam policy",
         risk_level=RiskLevel.INFORMATIONAL,
     )
     step2 = WorkflowStep(
         step_id="step-02",
-        tool_name="update_student_record",
-        arguments={"student_id": "STU-5542", "field": "financial_hold", "new_value": "CLEARED"},
-        description="Clear tuition hold in Student Information System",
+        tool_name="course_schedule",
+        arguments={"course_code": "CS101", "term": "Fall 2026"},
+        description="Access restricted examination timetable and proctor allocations",
         risk_level=RiskLevel.SENSITIVE,  # Consequential!
         depends_on=["step-01"],
     )
@@ -97,7 +96,7 @@ def demo_consequential_workflow_approved():
     plan = WorkflowPlan(
         session_id="sess-demo-02",
         correlation_id="corr-demo-02",
-        title="Clear Student Financial Hold",
+        title="Restricted Examination Schedule Access",
         steps=[step1, step2],
     )
 
@@ -137,21 +136,21 @@ def demo_consequential_workflow_approved():
 
 def demo_consequential_workflow_rejected():
     print_separator("Scenario 3: Consequential Workflow (Approval Rejected)")
-    print("Objective: Attempt to modify final exam grade (DESTRUCTIVE action).")
+    print("Objective: Attempt unauthorized schedule override (DESTRUCTIVE action).")
     print("Expected behavior: Executor pauses in AWAITING_APPROVAL; rejects action and transitions to CANCELLED.\n")
 
     step1 = WorkflowStep(
         step_id="step-01",
-        tool_name="update_student_record",
-        arguments={"student_id": "STU-9999", "field": "grade_cs101", "new_value": "A+"},
-        description="Override semester grade directly without faculty board review",
+        tool_name="course_schedule",
+        arguments={"course_code": "CS101", "term": "Fall 2026"},
+        description="Override room booking and instructor schedule directly without council review",
         risk_level=RiskLevel.DESTRUCTIVE,  # Consequential!
     )
 
     plan = WorkflowPlan(
         session_id="sess-demo-03",
         correlation_id="corr-demo-03",
-        title="Unauthorized Grade Override",
+        title="Unauthorized Schedule Override",
         steps=[step1],
     )
 
@@ -166,7 +165,7 @@ def demo_consequential_workflow_rejected():
     print(f"  Action Summary: {appr_req.action_summary}")
 
     print("\n--> Human Supervisor Action: REJECTING request...")
-    result = executor.reject_request(approval_id, reason="Grade modifications require academic council sign-off.")
+    result = executor.reject_request(approval_id, reason="Schedule modifications require academic council sign-off.")
 
     print(f"\nExecution Finished!")
     print(f"Final State: {result.final_state.value}")

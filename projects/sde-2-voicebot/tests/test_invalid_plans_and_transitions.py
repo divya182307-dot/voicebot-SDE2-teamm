@@ -50,7 +50,7 @@ def test_invalid_plan_direct_cycle():
     )
     step2 = WorkflowStep(
         step_id="step-b",
-        tool_name="send_notification",
+        tool_name="course_schedule",
         description="Step B",
         depends_on=["step-a"],
     )

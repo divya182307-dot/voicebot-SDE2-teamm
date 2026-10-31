@@ -327,3 +327,5 @@ Implemented the foundational workflow engine components:
 **Source location:** `projects/sde-2-voicebot/src/workflow/`
 
 **Tests location:** `projects/sde-2-voicebot/tests/`
+
+**Mock tools:** `knowledge_search` and `course_schedule` only. These tools do not send external messages or modify student records.
