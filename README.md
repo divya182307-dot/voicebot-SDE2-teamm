@@ -13,10 +13,12 @@ This module forms the speech recognition foundation of **Academia – AI Voice C
 
 ```
 Voicebot/
+├── demo.py                         # Top-level quick launcher for Day 7 streaming demo
 ├── docs/
 │   ├── schemas.md                  # Comprehensive field, unit, and validation documentation
 │   ├── transcriber_adapter.md      # Adapter contract and deterministic fake transcriber docs
-│   └── segment_accumulator.md      # Ordered segment accumulator and fixture engine docs
+│   ├── segment_accumulator.md      # Ordered segment accumulator and fixture engine docs
+│   └── chunk_to_transcript_demo.md # Day 7 end-to-end streaming demo documentation
 ├── schemas/                        # Exported JSON Schemas for Frontend & Backend interoperability
 │   ├── transcript_segment.json
 │   ├── transcript_event.json
@@ -28,6 +30,8 @@ Voicebot/
 │   ├── accumulator_config.json
 │   └── accumulated_transcript.json
 ├── scripts/
+│   ├── chunk_to_transcript_demo.py # Day 7 runnable chunk-to-transcript streaming demo
+│   ├── demo_chunk_to_transcript.py # Convenience alias script
 │   └── export_json_schemas.py      # Utility to generate/refresh JSON schemas
 ├── src/
 │   └── voice/
@@ -43,6 +47,7 @@ Voicebot/
 │   ├── conftest.py                 # Pytest fixture bindings
 │   ├── test_accumulator.py         # 25 unit tests for ordering, interims, deduplication, and fixtures
 │   ├── test_adapter.py             # 16 unit tests for adapter contract and audio specs
+│   ├── test_demo.py                # 10 integration and unit tests for Day 7 streaming demo
 │   ├── test_fake_transcriber.py    # 17 unit tests verifying 100% deterministic reproducibility
 │   └── test_schemas.py             # 26 unit tests covering schema constraints and edge cases
 └── pyproject.toml                  # Packaging and pytest configuration
@@ -109,13 +114,56 @@ Voicebot/
 
 3. **Automated Unit Tests**:
    - `tests/test_accumulator.py`: 25 tests covering sorting, interim lifecycle, deduplication, invalid inputs, snapshots, and fixtures.
-   - **Complete Test Suite**: **84 passing unit tests**.
+
+---
+
+### 📅 Day 7: Runnable Chunk-to-Transcript Demo Script
+1. **Interactive Demo Pipeline (`scripts/chunk_to_transcript_demo.py` & `demo.py`)**:
+   - **Audio Ingestion**: Streams 100ms raw PCM audio frames (`16kHz`, `mono`, `16-bit`, `3,200 bytes/chunk`) directly into `FakeTranscriber`.
+   - **Streaming Event Engine**: Emits `SPEECH_STARTED` $\rightarrow$ progressive speculative `INTERIM_TRANSCRIPT` hypotheses $\rightarrow$ locked `FINAL_TRANSCRIPT` (with `WordTiming`s) $\rightarrow$ `SPEECH_ENDED`.
+   - **Live UI Projections**: Continuously renders active interim text for UI live captions and committed final text for downstream LLM prompts.
+   - **Multi-Scenario Showcase**:
+     - *Scenario 1 (Single Turn Streaming)*: Chunk-by-chunk ingestion with progressive interims and word alignment breakdown table.
+     - *Scenario 2 (Multi-Turn Conversation)*: Consecutive turns demonstrating cumulative multi-turn transcript history.
+     - *Scenario 3 (Jitter & Deduplication)*: Out-of-order bisection sorting and duplicate delivery filtering.
+     - *Scenario 4 (Chaos Injection)*: Graceful capture of injected `TranscriptError` in diagnostic history.
+   - **Snapshot Export**: Serializes immutable `AccumulatedTranscript` to JSON (`--export-json`).
+
+2. **Automated Unit & Integration Tests**:
+   - `tests/test_demo.py`: 10 tests covering audio synthesis, scenario execution, and CLI invocation.
+   - **Complete Test Suite**: **94 passing unit tests** across 5 test modules.
+
+---
+
+## 🎬 Running the Day 7 Demo
+
+Run the end-to-end streaming demo via any of the convenient launchers:
+
+```bash
+# Top-level quick launcher (all scenarios)
+python demo.py
+
+# Or via scripts path
+python scripts/chunk_to_transcript_demo.py
+
+# Run single turn with custom text and visual pacing
+python demo.py --mode single --script "What is quicksort?" --pace 0.03
+
+# Run with natural 1.0x real-time speech pacing
+python demo.py --mode single --realtime
+
+# Instant execution (benchmarking)
+python demo.py --fast
+
+# Export final transcript snapshot to JSON
+python demo.py --export-json snapshot.json
+```
 
 ---
 
 ## 🧪 Running the Tests
 
-To run the complete automated test suite:
+To run the complete automated test suite (94 tests):
 ```bash
 python -m pytest -v
 ```
