@@ -129,3 +129,17 @@ def test_create_custom_synthetic_frame():
     assert frame.width == 1280
     assert frame.height == 720
     assert frame.ocr_text == "print('Hello World')"
+
+
+def test_synthetic_frames_determinism():
+    """Verify synthetic frames are strictly deterministic across invocations."""
+    mgr = ScreenCaptureManager(capture_enabled=True)
+    frame1 = mgr.capture_frame(SyntheticScenario.CODE_EDITOR_ERROR)
+    frame2 = mgr.capture_frame(SyntheticScenario.CODE_EDITOR_ERROR)
+    assert frame1.capture_id == frame2.capture_id
+    assert frame1.timestamp == frame2.timestamp
+
+    placeholder1 = mgr.get_disabled_placeholder_frame()
+    placeholder2 = mgr.get_disabled_placeholder_frame()
+    assert placeholder1.capture_id == placeholder2.capture_id
+    assert placeholder1.timestamp == placeholder2.timestamp

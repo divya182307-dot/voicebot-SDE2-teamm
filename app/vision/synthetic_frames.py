@@ -12,10 +12,13 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Generator, Optional
-import uuid
 
 from app.schemas.common import BoundingBox, CaptureMode
 from app.schemas.context import ScreenContext
+
+# Fixed deterministic values for synthetic screen frame generation
+DEFAULT_FIXED_TIMESTAMP: datetime = datetime(2026, 10, 26, 12, 0, 0, tzinfo=timezone.utc)
+DEFAULT_FIXED_UID: str = "00000000"
 
 
 class SyntheticScenario(str, Enum):
@@ -102,8 +105,8 @@ class ScreenCaptureManager:
         Ensures no screen data is leaked when permissions are absent.
         """
         return ScreenContext(
-            capture_id=f"cap-disabled-{uuid.uuid4().hex[:8]}",
-            timestamp=datetime.now(timezone.utc),
+            capture_id=f"cap-disabled-{DEFAULT_FIXED_UID}",
+            timestamp=DEFAULT_FIXED_TIMESTAMP,
             capture_mode=CaptureMode.ACTIVE_WINDOW,
             application_name=None,
             window_title="[Capture Disabled]",
@@ -122,8 +125,8 @@ class ScreenCaptureManager:
         """
         Generates deterministic synthetic frames representing standard PRD scenarios.
         """
-        now = datetime.now(timezone.utc)
-        uid = uuid.uuid4().hex[:8]
+        now = DEFAULT_FIXED_TIMESTAMP
+        uid = DEFAULT_FIXED_UID
 
         if scenario == SyntheticScenario.CODE_EDITOR_ERROR:
             # PRD UC-02: Persona 1 (VS Code runtime error)
@@ -245,13 +248,15 @@ class ScreenCaptureManager:
         ocr_confidence: float = 0.95,
         contains_sensitive_data: bool = False,
         bounding_box: Optional[BoundingBox] = None,
+        capture_id: Optional[str] = None,
+        timestamp: Optional[datetime] = None,
     ) -> ScreenContext:
         """
         Creates a custom synthetic frame with explicit attributes.
         """
         return ScreenContext(
-            capture_id=f"cap-custom-{uuid.uuid4().hex[:8]}",
-            timestamp=datetime.now(timezone.utc),
+            capture_id=capture_id or f"cap-custom-{DEFAULT_FIXED_UID}",
+            timestamp=timestamp or DEFAULT_FIXED_TIMESTAMP,
             capture_mode=capture_mode,
             application_name=application_name,
             window_title=window_title,

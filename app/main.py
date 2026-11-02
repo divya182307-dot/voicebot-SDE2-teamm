@@ -100,7 +100,7 @@ def run_reasoning(request: ReasoningRequest):
 @app.post("/api/capture")
 def run_capture(req: CaptureRequest):
     """
-    Executes live screen capture with real privacy enforcement.
+    Executes synthetic screen frame capture with privacy authorization enforcement.
     """
     scenario_enum = getattr(SyntheticScenario, req.scenario.upper(), SyntheticScenario.CODE_EDITOR_ERROR)
 

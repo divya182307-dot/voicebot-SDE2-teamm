@@ -24,6 +24,10 @@ import test_mock_reasoning
 import test_versioned_prompts
 import test_day2_integration
 import test_reasoning_validation
+import test_capture_and_vision_adapters
+import test_bounded_context_builder
+import test_llm_client_adapter
+import test_malformed_output
 
 
 def run_all_tests():
@@ -33,6 +37,10 @@ def run_all_tests():
         ("Task 3: Versioned Prompts with Trusted/Untrusted Separation", test_versioned_prompts),
         ("Task 4: Complete End-to-End Pipeline Integration", test_day2_integration),
         ("Task 5: Reasoning Request & Result Validation Suite", test_reasoning_validation),
+        ("Task 6: Opt-In Capture Adapter & OCR/Vision Adapter Interface", test_capture_and_vision_adapters),
+        ("Task 7: Bounded Context Builder (Recency, Relevance & Budget)", test_bounded_context_builder),
+        ("Task 8: LLM Client Adapter (Timeout, Retry & Structured Output)", test_llm_client_adapter),
+        ("Task 9: Malformed Output & Schema Error Handling Tests", test_malformed_output),
     ]
 
     total_run = 0

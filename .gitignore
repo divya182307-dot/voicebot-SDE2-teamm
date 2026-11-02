@@ -31,3 +31,8 @@ htmlcov/
 *.swo
 .DS_Store
 *.log
+
+# Results screenshots
+results/*.jpg
+results/*.jpeg
+results/*.png

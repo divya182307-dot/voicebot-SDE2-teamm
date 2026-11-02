@@ -14,6 +14,12 @@ voicebot-SDE2-teamm/
 ├── app/
 │   ├── __init__.py
 │   ├── main.py                         # Live FastAPI backend & interactive web application
+│   ├── context/
+│   │   ├── __init__.py
+│   │   └── builder.py                  # BoundedContextBuilder (recency, relevance, token budget, stale filter)
+│   ├── llm/
+│   │   ├── __init__.py
+│   │   └── client_adapter.py           # LLMClientAdapter (timeout, retry, structured validation)
 │   ├── prompts/
 │   │   ├── __init__.py
 │   │   ├── models.py                   # VersionedPrompt & RenderedPrompt definitions
@@ -28,23 +34,29 @@ voicebot-SDE2-teamm/
 │   │   └── reasoning.py                # ReasoningRequest, ReasoningResult, ActionStep schemas
 │   └── vision/
 │       ├── __init__.py
-│       └── synthetic_frames.py         # ScreenCaptureManager with privacy enforcement
+│       ├── capture_adapter.py          # Opt-in capture adapter with sampling & size limits
+│       ├── synthetic_frames.py         # ScreenCaptureManager with privacy enforcement
+│       └── vision_adapter.py           # OCR & vision adapter interface + deterministic engine
 ├── results/
-│   ├── day2_interactive_demo.jpg       # Visual snapshot of interactive CLI demo
-│   ├── day2_test_results.jpg           # Visual snapshot of automated test suite
 │   ├── test_server.ps1                 # Endpoint smoke test script
 │   └── view_results.html               # Interactive deliverables viewer & scorecard
 ├── tests/
 │   ├── __init__.py
 │   ├── conftest.py                     # Pytest fixtures and mock test setups
-│   ├── run_tests.py                    # Standalone test runner (50/50 passing tests)
+│   ├── run_tests.py                    # Standalone test runner (102/102 passing tests)
+│   ├── test_bounded_context_builder.py # Recency, relevance, budget & stale filter tests (11 tests)
+│   ├── test_capture_and_vision_adapters.py # Opt-in, rate limiting, size & vision tests (15 tests)
+│   ├── test_llm_client_adapter.py      # Timeout, retry & structured validation tests (12 tests)
+│   ├── test_malformed_output.py        # Malformed output & schema error handling tests (13 tests)
 │   ├── test_day2_integration.py        # Complete end-to-end integration test
 │   ├── test_mock_reasoning.py          # Deterministic reasoning & safety tests (5 tests)
 │   ├── test_reasoning_validation.py    # Request & result validation test suite (33 tests)
 │   ├── test_synthetic_frames.py        # Privacy & synthetic capture tests (7 tests)
 │   └── test_versioned_prompts.py       # Prompt isolation & injection defense tests (4 tests)
 ├── .gitignore                          # Python cache and temporary file exclusions
+├── benchmark_cli.py                    # Voice, Text, and Performance benchmark CLI
 ├── demo.py                             # Day 7 demonstration script (grounded response demo)
+├── demo_adapters.py                    # Opt-in capture & vision adapter terminal demo
 ├── demo_day2.py                        # Interactive terminal demonstration script
 ├── README.md                           # Comprehensive Day 1–7 project documentation
 └── run_server.py                       # Server runner for live execution engine
