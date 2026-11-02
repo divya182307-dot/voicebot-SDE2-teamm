@@ -133,9 +133,16 @@ def run_interactive_mode(engine: DeterministicMockReasoningEngine, speak_audio: 
     """Starts an ongoing interactive voice dialogue loop in the terminal."""
     print("\n" + "=" * 75)
     print(" ACADEMIA AI VOICEBOT - INTERACTIVE VOICE SHELL")
-    print(" Type any voice query or speech utterance below.")
+    print(" Speak or type your voice utterance below.")
     print(" Type 'exit' or 'quit' to end the session.")
     print("=" * 75)
+    print(" [MICROPHONE TIP] To speak using your physical microphone:")
+    print("   1. Click on this terminal window.")
+    print("   2. Press [Windows Key + H] (Win + H) on your keyboard.")
+    print("   3. Windows Voice Dictation will open at the top of your screen.")
+    print("   4. Speak into your mic! Windows will type your words in real time.")
+    print("   5. Press Enter to submit your spoken utterance to the Voicebot.")
+    print("-" * 75)
 
     example_queries = [
         "Why is this code throwing an exception?",
