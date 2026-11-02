@@ -1,0 +1,162 @@
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: Arial, sans-serif;
+  background: #f4f6fb;
+  color: #222;
+}
+
+.app {
+  min-height: 100vh;
+}
+
+.header {
+  background: #252b45;
+  color: white;
+  padding: 25px 40px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.header h1 {
+  font-size: 25px;
+}
+
+.header-status {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  flex-wrap: wrap;
+}
+
+.mock-banner {
+  background: #fff0c2;
+  color: #805800;
+  padding: 9px 16px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: bold;
+}
+
+.connection-status {
+  background: #d9fbe5;
+  color: #176b39;
+  padding: 9px 16px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: bold;
+}
+
+.main {
+  max-width: 1200px;
+  margin: 45px auto;
+  padding: 0 20px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 25px;
+  align-items: start;
+}
+
+.session-card,
+.transcript-card {
+  background: white;
+  padding: 30px;
+  border-radius: 14px;
+  box-shadow: 0 3px 15px rgba(0, 0, 0, 0.07);
+}
+
+h2 {
+  margin-bottom: 18px;
+}
+
+p {
+  color: #666;
+  margin-bottom: 20px;
+}
+
+.start-button {
+  background: #5146d8;
+  color: white;
+  border: none;
+  padding: 13px 25px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 16px;
+  margin-top: 10px;
+}
+
+.start-button:hover {
+  background: #392eb5;
+}
+
+.start-button:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.stop-button {
+  background: #dc3545;
+  color: white;
+  border: none;
+  padding: 13px 25px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 16px;
+  margin-top: 15px;
+}
+
+.stop-button:hover {
+  background: #b52a37;
+}
+
+.stop-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.status {
+  margin-top: 25px;
+  margin-bottom: 10px;
+  font-size: 14px;
+}
+
+.transcript-item {
+  background: #f4f3ff;
+  padding: 18px;
+  margin-top: 20px;
+  border-radius: 10px;
+  border-left: 4px solid #5146d8;
+}
+
+.speaker {
+  font-weight: bold;
+  color: #5146d8;
+}
+
+.transcript-item p {
+  margin-top: 10px;
+  color: #333;
+}
+
+.transcript-item small {
+  color: #777;
+}
+
+@media (max-width: 700px) {
+  .main {
+    grid-template-columns: 1fr;
+  }
+
+  .header {
+    padding: 20px;
+    flex-direction: column;
+  }
+}
