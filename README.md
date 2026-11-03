@@ -131,7 +131,56 @@ Voicebot/
 
 2. **Automated Unit & Integration Tests**:
    - `tests/test_demo.py`: 10 tests covering audio synthesis, scenario execution, and CLI invocation.
-   - **Complete Test Suite**: **94 passing unit tests** across 5 test modules.
+
+---
+
+### 📅 Day 8–9: Speech-to-Text Transcription Orchestration (Week 2 Milestone)
+1. **Transcription Orchestrator (`src/voice/orchestrator.py`)**:
+   - Central coordinator connecting audio chunk streams to provider adapters and transcript event subscribers.
+   - **Asynchronous Audio Ingestion**: Manages an async chunk queue with configurable backpressure buffering.
+   - **Adapter Lifecycle Coordination**: Manages adapter state transitions (`IDLE` → `STARTING` → `RUNNING` → `STOPPING` → `STOPPED`).
+   - **Dual Dispatch Model**: Supports both asynchronous streaming iterators (`async for event in orchestrator.stream()`) and callback listeners (`add_event_listener`).
+   - **Segment Accumulator Integration**: Automatically feeds transcript events into `SegmentAccumulator` to provide real-time downstream projections (`get_final_text()`, `get_interim_text()`, `get_snapshot()`).
+   - **Session Telemetry**: Tracks chunks ingested, total bytes, audio duration, speech turns detected, and event counters (`OrchestratorMetrics`).
+   - **Zero-Configuration Mock Mode**: Pairs natively with `FakeTranscriber` by default—requiring zero API keys or network requests.
+2. **Automated Unit & Integration Tests**:
+   - `tests/test_orchestrator.py`: 16 comprehensive tests covering initialization, auto-start, validation, streaming, callbacks, and telemetry.
+
+---
+
+### 📅 Day 10–11: Ordering, Duplicate Suppression & Interim/Final Reconciliation (Week 2 Milestone)
+1. **Reconciliation Engine (`src/voice/reconciliation.py`)**:
+   - **Strict Chronological Ordering**: Multi-key bisection sorting (`start_time_ms`, `end_time_ms`, `id`) ensuring out-of-order segment arrivals are reordered into natural speech order.
+   - **Multi-Layer Deduplication**: Filters duplicate `event_id`s, duplicate segment `id`s, temporal/content duplicates, and repeated consecutive interim hypotheses.
+   - **Interim/Final Reconciliation**:
+     - Drops stale speculative interims that fall behind committed final segment boundaries.
+     - Trims overlapping interim boundaries against committed speech.
+     - Automatically clears or updates interim hypotheses when final segments lock.
+     - Supports optional turn-boundary interim promotion (`promote_interim_on_speech_ended`).
+   - **Integrated Orchestration**: Fully wired into `TranscriptionOrchestrator` to guarantee clean, non-duplicate, ordered events across `orchestrator.stream()`.
+   - **Telemetry Tracking**: Tracks `duplicates_suppressed`, `out_of_order_resolved`, `stale_interims_count`, and `repeated_interims_count`.
+2. **Automated Unit & Integration Tests**:
+   - `tests/test_reconciliation.py`: 14 comprehensive unit tests verifying ordering, multi-layer deduplication, interim trimming, and orchestrator stream filtering.
+
+---
+
+### 📅 Day 12–13: Resilience, Bounded Retries, Error Normalization & Audio Preprocessing (Week 2 Milestone)
+1. **Audio Preprocessing Pipeline (`src/voice/preprocessing.py`)**:
+   - **Pure-Python Resampling (`resample_pcm16`)**: High-precision linear interpolation converting arbitrary sample rates (8kHz, 22.05kHz, 44.1kHz, 48kHz) to standard 16kHz speech recognition rates (PEP 594 compliant, no deprecated `audioop`).
+   - **Amplitude Normalization (`normalize_amplitude_pcm16`)**: Peak dBFS scaling (e.g. -1.0 dBFS) and RMS loudness energy normalization with DC offset removal and range clamping.
+   - **Channel Downmixing (`convert_stereo_to_mono`)**: Fast downmixing from 2-channel stereo to 1-channel mono via channel sample averaging.
+   - **Modular `AudioPreprocessor`**: Processes streaming frames or batch buffers with comprehensive telemetry (`chunks_processed`, `bytes_in`, `bytes_out`, `chunks_resampled`, `chunks_normalized`).
+2. **Resilience & Fault Tolerance Layer (`src/voice/resilience.py`)**:
+   - **Bounded Exponential Backoff (`RetryPolicy`)**: Bounded retries (default 3) with configurable initial delay, backoff multiplier, and full randomization jitter.
+   - **Transient vs Non-Retryable Error Classification**: Retries connection drops, socket resets, 429 rate limits, and 503 service outages, while immediately failing on auth/format errors.
+   - **Timeouts (`TimeoutPolicy`)**: Enforces deadlines on connection, chunk pushing, and full operations, converting violations to typed `TranscriberTimeoutError` exceptions.
+   - **Strict Error Normalization (`ErrorNormalizer`)**: Maps all raw network, vendor, HTTP, and socket exceptions into typed `TranscriberError` exceptions and canonical `TranscriptEvent(ERROR)` events—guaranteeing that raw vendor exceptions never leak upstream.
+   - **`ResilientTranscriberWrapper`**: Adapter decorator wrapping any transcriber with automatic timeout, retry, and error normalization protection.
+   - **Seamless Orchestrator Integration**: Preprocesses incoming audio and shields streaming execution in `TranscriptionOrchestrator`.
+3. **Automated Unit & Integration Tests**:
+   - `tests/test_preprocessing.py`: 13 tests covering resampling, stereo downmixing, peak/RMS normalization, and DC centering.
+   - `tests/test_resilience.py`: 17 tests covering bounded retries, timeouts, error normalization, and wrapper integration.
+   - **Complete Test Suite**: **154 passing unit tests** across 8 test modules.
 
 ---
 

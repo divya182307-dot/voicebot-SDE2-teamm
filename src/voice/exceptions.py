@@ -44,6 +44,30 @@ class TranscriberConnectionError(TranscriberError):
     pass
 
 
+class TranscriberTimeoutError(TranscriberError):
+    """Raised when a transcriber network operation or processing phase times out."""
+
+    pass
+
+
+class TranscriberRateLimitError(TranscriberError):
+    """Raised when a speech recognition provider enforces rate limits or quota throttles."""
+
+    pass
+
+
+class TranscriberAuthenticationError(TranscriberError):
+    """Raised when an STT provider rejects credentials, tokens, or permissions."""
+
+    pass
+
+
+class TranscriberServiceUnavailableError(TranscriberError):
+    """Raised when an STT service responds with 502/503/504 or server-side failure."""
+
+    pass
+
+
 class TranscriberStateError(TranscriberError):
     """Raised when a transcriber method is invoked in an invalid lifecycle state."""
 
@@ -80,3 +104,25 @@ class DuplicateSegmentError(AccumulatorError):
     pass
 
 
+class OrchestratorError(VoiceError):
+    """Base exception for transcription orchestrator operations."""
+
+    pass
+
+
+class OrchestratorStateError(OrchestratorError):
+    """Raised when an orchestrator operation is invoked in an invalid lifecycle state."""
+
+    pass
+
+
+class AudioPreprocessingError(VoiceError):
+    """Raised when audio resampling, channel conversion, or normalization fails."""
+
+    pass
+
+
+class RetryExhaustedError(VoiceError):
+    """Raised when all bounded retry attempts have been exhausted without success."""
+
+    pass

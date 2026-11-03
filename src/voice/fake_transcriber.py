@@ -411,6 +411,11 @@ class FakeTranscriber(BaseTranscriber):
                 end_time_ms=seg_end,
                 base_confidence=utterance.confidence,
             )
+            # Ensure segment end_time_ms covers all generated word timings
+            if words:
+                max_word_end = max(w.end_time_ms for w in words)
+                if max_word_end > seg_end:
+                    seg_end = max_word_end
 
         final_segment = TranscriptSegment(
             id=self._active_segment_id or "seg-default",
