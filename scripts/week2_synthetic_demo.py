@@ -185,7 +185,7 @@ async def run_demo(script: str, export_path: str | None = None) -> int:
 
     # Display accumulator snapshot
     snapshot = orch.accumulator.get_snapshot()
-    print(f"\n      Final Text: \"{snapshot.committed_text}\"")
+    print(f"\n      Final Text: \"{snapshot.final_text}\"")
     print(f"      Word Count: {snapshot.word_count}")
     print(f"      Avg Confidence: {snapshot.average_confidence:.4f}")
 
@@ -199,7 +199,7 @@ async def run_demo(script: str, export_path: str | None = None) -> int:
     orch_metrics = orch.metrics
     print(f"\n      Orchestrator Metrics:")
     print(f"         Total chunks ingested: {orch_metrics.chunks_ingested}")
-    print(f"         Total bytes ingested:  {orch_metrics.total_bytes_ingested:,}")
+    print(f"         Total bytes ingested:  {orch_metrics.bytes_ingested:,}")
 
     # -- Step 5: Contract verification ------------------------------------
     print(f"\n[5/5] Contract Verification:")
