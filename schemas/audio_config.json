@@ -1,0 +1,51 @@
+{
+  "$defs": {
+    "AudioEncoding": {
+      "description": "Supported audio encodings for voice stream ingestion.",
+      "enum": [
+        "pcm_s16le",
+        "pcm_f32le",
+        "opus",
+        "mulaw",
+        "alaw"
+      ],
+      "title": "AudioEncoding",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Audio stream specification and format parameters.\n\nFields:\n    sample_rate_hertz: Audio sample rate in Hz (e.g., 16000 for standard speech).\n    channels: Number of audio channels (1 for mono, 2 for stereo).\n    encoding: Audio encoding format (defaults to PCM_S16LE).\n    chunk_duration_ms: Duration of an individual audio chunk in milliseconds.",
+  "properties": {
+    "sample_rate_hertz": {
+      "default": 16000,
+      "description": "Audio sampling rate in Hertz (e.g., 8000, 16000, 44100, 48000)",
+      "maximum": 48000,
+      "minimum": 8000,
+      "title": "Sample Rate Hertz",
+      "type": "integer"
+    },
+    "channels": {
+      "default": 1,
+      "description": "Channel count (1=mono, 2=stereo)",
+      "maximum": 2,
+      "minimum": 1,
+      "title": "Channels",
+      "type": "integer"
+    },
+    "encoding": {
+      "$ref": "#/$defs/AudioEncoding",
+      "default": "pcm_s16le",
+      "description": "Audio codec or sample format"
+    },
+    "chunk_duration_ms": {
+      "default": 100,
+      "description": "Duration of each audio frame/chunk in milliseconds",
+      "maximum": 1000,
+      "minimum": 10,
+      "title": "Chunk Duration Ms",
+      "type": "integer"
+    }
+  },
+  "title": "AudioConfig",
+  "type": "object"
+}

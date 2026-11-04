@@ -1,0 +1,112 @@
+{
+  "$defs": {
+    "WordTiming": {
+      "additionalProperties": false,
+      "description": "Word-level timing information for synchronized visual rendering and highlighting.\n\nFields:\n    word: The spoken word token.\n    start_time_ms: Start offset from audio onset in milliseconds (>= 0).\n    end_time_ms: End offset from audio onset in milliseconds (>= start_time_ms).\n    confidence: Word transcription confidence score [0.0, 1.0].",
+      "properties": {
+        "word": {
+          "description": "Transcribed word token",
+          "minLength": 1,
+          "title": "Word",
+          "type": "string"
+        },
+        "start_time_ms": {
+          "description": "Start offset in milliseconds from audio start",
+          "minimum": 0,
+          "title": "Start Time Ms",
+          "type": "integer"
+        },
+        "end_time_ms": {
+          "description": "End offset in milliseconds from audio start",
+          "minimum": 0,
+          "title": "End Time Ms",
+          "type": "integer"
+        },
+        "confidence": {
+          "description": "Confidence score between 0.0 and 1.0",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        }
+      },
+      "required": [
+        "word",
+        "start_time_ms",
+        "end_time_ms",
+        "confidence"
+      ],
+      "title": "WordTiming",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Atomic unit of transcribed speech representing a phrase, sentence, or utterance.\n\nFields:\n    id: Unique identifier for the segment.\n    start_time_ms: Start offset in milliseconds from audio stream onset (unit: ms, ge: 0).\n    end_time_ms: End offset in milliseconds from audio stream onset (unit: ms, ge: 0).\n    text: Transcribed text content.\n    confidence: Normalized confidence score from speech recognizer (range: [0.0, 1.0]).\n    is_final: Flag indicating whether this segment is final (immutable) or interim (speculative).\n    language: BCP-47 / ISO language code (e.g. 'en', 'en-US', 'es', 'hi').\n    words: Optional list of word-level timings for sub-segment precision.",
+  "properties": {
+    "id": {
+      "description": "Unique identifier for the transcript segment",
+      "title": "Id",
+      "type": "string"
+    },
+    "start_time_ms": {
+      "description": "Start timestamp in milliseconds relative to audio stream start (unit: ms, constraint: >= 0)",
+      "minimum": 0,
+      "title": "Start Time Ms",
+      "type": "integer"
+    },
+    "end_time_ms": {
+      "description": "End timestamp in milliseconds relative to audio stream start (unit: ms, constraint: >= start_time_ms)",
+      "minimum": 0,
+      "title": "End Time Ms",
+      "type": "integer"
+    },
+    "text": {
+      "description": "Transcribed text string",
+      "title": "Text",
+      "type": "string"
+    },
+    "confidence": {
+      "description": "Confidence score assigned by STT engine (unit: normalized probability, constraint: [0.0, 1.0])",
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Confidence",
+      "type": "number"
+    },
+    "is_final": {
+      "default": false,
+      "description": "True if segment is finalized/locked; False if interim/speculative hypothesis",
+      "title": "Is Final",
+      "type": "boolean"
+    },
+    "language": {
+      "default": "en",
+      "description": "Language code compliant with ISO 639-1 / BCP-47 (e.g., 'en', 'en-US')",
+      "title": "Language",
+      "type": "string"
+    },
+    "words": {
+      "anyOf": [
+        {
+          "items": {
+            "$ref": "#/$defs/WordTiming"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Optional list of word-level timing breakdown",
+      "title": "Words"
+    }
+  },
+  "required": [
+    "start_time_ms",
+    "end_time_ms",
+    "text",
+    "confidence"
+  ],
+  "title": "TranscriptSegment",
+  "type": "object"
+}

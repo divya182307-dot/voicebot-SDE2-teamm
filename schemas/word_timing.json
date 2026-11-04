@@ -1,0 +1,39 @@
+{
+  "additionalProperties": false,
+  "description": "Word-level timing information for synchronized visual rendering and highlighting.\n\nFields:\n    word: The spoken word token.\n    start_time_ms: Start offset from audio onset in milliseconds (>= 0).\n    end_time_ms: End offset from audio onset in milliseconds (>= start_time_ms).\n    confidence: Word transcription confidence score [0.0, 1.0].",
+  "properties": {
+    "word": {
+      "description": "Transcribed word token",
+      "minLength": 1,
+      "title": "Word",
+      "type": "string"
+    },
+    "start_time_ms": {
+      "description": "Start offset in milliseconds from audio start",
+      "minimum": 0,
+      "title": "Start Time Ms",
+      "type": "integer"
+    },
+    "end_time_ms": {
+      "description": "End offset in milliseconds from audio start",
+      "minimum": 0,
+      "title": "End Time Ms",
+      "type": "integer"
+    },
+    "confidence": {
+      "description": "Confidence score between 0.0 and 1.0",
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Confidence",
+      "type": "number"
+    }
+  },
+  "required": [
+    "word",
+    "start_time_ms",
+    "end_time_ms",
+    "confidence"
+  ],
+  "title": "WordTiming",
+  "type": "object"
+}
