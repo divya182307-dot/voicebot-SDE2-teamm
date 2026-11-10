@@ -1,15 +1,16 @@
-# SDE-2 Voicebot - Week 1 Deliverables (Audio & VAD)
+# SDE-2 Voicebot - Audio & VAD Engine (Weeks 1 & 2)
 
 **Academia - AI Voice Co-Pilot**  
 **Track:** SDE-2 Voicebot (`projects/sde-2-voicebot/`)  
-**Phase:** Week 1 — Foundation (Workstream W1: Audio and Voice Activity)  
+**Phase:** Week 1 Foundation & Week 2 Audio Lifecycle, VAD & Buffering  
+**Workstream:** W1: Audio and Voice Activity  
 **Owner:** Siri G R  
 
 ---
 
 ## Deliverables Summary
 
-### 1. Audio Schemas & Validation Suite (Days 1 & 2)
+### 1. Audio Schemas & Validation Suite (Week 1, Days 1 & 2)
 - **Module:** `voicebot.schemas`
 - **Classes:** `AudioFormat`, `AudioChunk`, `AudioError`
 - **Specification Enforcement:**
@@ -21,7 +22,7 @@
 
 ---
 
-### 2. Deterministic Mock Audio Source (Days 3 & 4)
+### 2. Deterministic Mock Audio Source (Week 1, Days 3 & 4)
 - **Module:** `voicebot.mock_microphone`
 - **Class:** `MockMicrophone`
 - **Consistency Guarantee:** Generates 100% reproducible, deterministic `AudioChunk` streams without requiring physical hardware or paid cloud APIs (Mock mode by default).
@@ -32,7 +33,7 @@
 
 ---
 
-### 3. Deterministic Audio Chunker (Days 3 & 4)
+### 3. Deterministic Audio Chunker (Week 1, Days 3 & 4)
 - **Module:** `voicebot.chunker`
 - **Classes / Functions:** `AudioChunker`, `chunk_audio`
 - **Features:**
@@ -45,13 +46,68 @@
 
 ---
 
-### 4. CLI Audio Streaming Demonstration (Days 5 & 6)
+### 4. Audio Device Adapter & Permissions (Week 2, Days 8 & 9)
+- **Module:** `voicebot.device`
+- **Classes / Enums:** `PermissionState`, `AudioDevice`, `AudioDeviceAdapter`, `MockAudioDeviceAdapter`
+- **Features:**
+  - Standardized device permissions: `PROMPT`, `GRANTED`, `DENIED`, and `UNAVAILABLE`.
+  - Immediate stream rejection on `DENIED` or `PROMPT` devices with descriptive `AudioError`.
+  - Mid-stream permission revocation and device disconnect handling: gracefully halts active streams and transitions controller to `ERROR` state.
+  - Frozen, immutable `AudioDevice` metadata with device formatting capabilities.
+
+---
+
+### 5. Audio Capture Lifecycle Controller (Week 2, Days 10 & 11)
+- **Module:** `voicebot.lifecycle`
+- **Classes / Enums:** `LifecycleState`, `AudioLifecycleController`
+- **State Machine Transitions:**
+  - Enforces strict transition rules: `INITIALIZED` -> `RECORDING` <-> `PAUSED` -> `STOPPED` / `ERROR`.
+  - Blocks illegal transitions (e.g. `PAUSED` -> `RECORDING` without `resume()`) with actionable error messages.
+  - **Pause Frame Suppression:** Incoming audio frames during `PAUSED` state are safely suppressed without corrupting sequence offsets.
+  - **Thread-Safe State Locking:** Synchronized state transitions preventing race conditions in asynchronous ingestion loops.
+  - **Resource Teardown:** Clean adapter release on `stop()` with idempotent guarantees.
+
+---
+
+### 6. Deterministic Voice Activity Detector (Week 2, Days 10 & 11)
+- **Module:** `voicebot.vad`
+- **Classes:** `VoiceActivityDetector`, `VADResult`
+- **Features:**
+  - **Energy Detection:** Computes normalized Root Mean Square (RMS) energy in `[0.0, 1.0]` with zero-division guard.
+  - **Configurable Energy Threshold:** Classifies speech vs. silence based on tunable `energy_threshold` (default: 0.02).
+  - **Minimum Speech Duration Debouncing:** Suppresses short clicks, mic pops, or keyboard taps (`min_speech_duration_ms=100.0ms`) until sustained speech is verified.
+  - **Speech Hangover Debouncing:** Prevents inter-word syllable clipping during natural pauses.
+  - **100% Deterministic Testing:** Built-in synthetic waveform generators for reproducible offline verification.
+
+---
+
+### 7. Bounded Audio Stream Buffer & Backpressure (Week 2, Days 12 & 13)
+- **Module:** `voicebot.buffer`
+- **Classes / Enums:** `BoundedAudioBuffer`, `DropStrategy`, `BufferStatistics`
+- **Features:**
+  - **Capacity-Bounded Ring Buffer:** Strict chunk limit (`max_chunks`) preventing unbounded memory growth.
+  - **3 Configurable Drop Strategies:** `DROP_OLDEST` (evicts oldest chunk), `DROP_NEWEST` (drops incoming chunk), and `REJECT_NEW` (raises buffer full error).
+  - **High-Water Mark Backpressure Signaling:** `is_backpressure_active` flag triggers when buffer reaches 80% occupancy to alert upstream producers before dropping.
+  - **Sequence Integrity & Anomaly Tracking:** Detects and counts sequence gaps (`gaps_detected`) and late/out-of-order chunks (`late_chunks_detected`).
+  - **Packet Loss Telemetry:** Tracks cumulative dropped chunks (`dropped_chunk_counter`).
+
+---
+
+### 8. Robustness Suite & Diagnostics Telemetry (Week 2, Day 14)
+- **Modules:** `voicebot.diagnostics`, `tests/test_audio_pipeline.py`
+- **Features:**
+  - `collect_diagnostics()` snapshots lifecycle state, buffer statistics, and VAD metrics into an exportable `PipelineDiagnostics` dataclass.
+  - Comprehensive robustness tests verifying sequence gap detection, out-of-order chunk recovery, and noise discrimination (ambient noise vs. transient clicks vs. sustained speech).
+
+---
+
+### 9. CLI Streaming & Pipeline Demonstration (Days 5, 6 & 14)
 - **Module:** `voicebot.cli`
 - **Features:**
   - Streams audio chunks in real-time or batch mode.
-  - Formats and displays metadata per chunk: Sequence ID, Timestamp, Format (Hz, ch, bit depth), Frame count, and Byte size.
-  - Displays a summary footer with total chunks, frames, bytes, and duration.
-  - Fully configurable via command-line flags (`--sample-rate`, `--channels`, `--chunk-count`, `--frames-per-chunk`, `--realtime`).
+  - Formats and displays metadata per chunk: Sequence ID, Timestamp, RMS Energy, VAD status badge, Buffer occupancy, and Byte size.
+  - Supports dual modes: default Week 1 chunking stream and Week 2 `--pipeline` dashboard.
+  - Fully configurable via flags (`--sample-rate`, `--channels`, `--chunk-count`, `--frames-per-chunk`, `--realtime`, `--pipeline`, `--demo-pause`).
 
 ---
 
@@ -59,14 +115,14 @@
 
 From the repository root:
 
+### Week 1 Baseline Demo:
 ```powershell
 python projects/sde-2-voicebot/src/voicebot/cli.py
 ```
 
-### With Custom Audio Parameters (e.g. 20ms Speech Chunks at 16kHz):
-
+### Week 2 Pipeline & VAD Live Demo:
 ```powershell
-python projects/sde-2-voicebot/src/voicebot/cli.py --sample-rate 16000 --channels 1 --chunk-count 5 --frames-per-chunk 320
+python projects/sde-2-voicebot/src/voicebot/cli.py --pipeline --frames-per-chunk 1600 --chunk-count 10 --demo-pause --realtime
 ```
 
 ---
@@ -76,21 +132,26 @@ python projects/sde-2-voicebot/src/voicebot/cli.py --sample-rate 16000 --channel
 From the repository root:
 
 ```powershell
-$env:PYTHONPATH="projects/sde-2-voicebot/src"; python -m unittest discover -s projects/sde-2-voicebot/tests -v
+python -m pytest projects/sde-2-voicebot -v
 ```
 
-Or using `pytest`:
+Or using standard unittest discover:
 
 ```powershell
-$env:PYTHONPATH="projects/sde-2-voicebot/src"; python -m pytest projects/sde-2-voicebot/tests -v
+$env:PYTHONPATH="projects/sde-2-voicebot/src"; python -m unittest discover -s projects/sde-2-voicebot/tests -v
 ```
 
 ---
 
-## Test Suite Summary (66 / 66 Tests Passing - 100% Success)
+## Comprehensive Test Suite Summary (163 / 163 Tests Passing - 100% Success)
 
 - **`test_schemas.py` (24 tests):** Format initialization, boundary values, channel/sample-rate validation, immutability, and docstring checks.
 - **`test_mock_microphone.py` (14 tests):** Chunk count, monotonic sequencing, drift-free timestamps, determinism, and backward-compatible positional constructor.
 - **`test_chunker.py` (12 tests):** Buffer and stream chunking, partial tail chunks, timing validation on empty streams, and convenience functions.
 - **`test_chunk_validation.py` (16 tests):** Valid happy paths across 8kHz to 48kHz, empty buffer rejection, invalid types, corrupt/misaligned frame detection, and CLI demo execution.
-- **Total:** **66 / 66 PASSED (114 subtests passed, 0 failures, 0 errors)**
+- **`test_device.py` (35 tests):** Device selection, permission states (`PROMPT`, `GRANTED`, `DENIED`, `UNAVAILABLE`), immediate rejections, mid-stream revocation.
+- **`test_lifecycle.py` (23 tests):** Lifecycle state machine (`start`, `pause`, `resume`, `stop`), transition matrix, pause frame suppression, resource cleanup.
+- **`test_vad.py` (15 tests):** RMS energy calculation, silence vs speech, debounce duration, transient click rejection, sustained speech triggers.
+- **`test_buffer.py` (16 tests):** Bounded ring buffer, 80% watermark backpressure, 3 drop strategies, dropped chunk counter, sequence gap and late chunk tracking.
+- **`test_audio_pipeline.py` (8 tests):** Sequence gap handling, late/out-of-order chunk recovery, noise discrimination, full end-to-end audio pipeline lifecycle.
+- **Total:** **163 / 163 PASSED (177 subtests passed, 0 failures, 0 errors in ~0.35s)**
