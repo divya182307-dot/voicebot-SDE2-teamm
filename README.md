@@ -8,9 +8,9 @@
 
 ---
 
-## Deliverables Summary
+## Week 1 Deliverables (Days 1–7: Foundation & Audio Streaming)
 
-### 1. Audio Schemas & Validation Suite (Week 1, Days 1 & 2)
+### 1. Audio Schemas & Validation Suite (Days 1 & 2)
 - **Module:** `voicebot.schemas`
 - **Classes:** `AudioFormat`, `AudioChunk`, `AudioError`
 - **Specification Enforcement:**
@@ -22,7 +22,7 @@
 
 ---
 
-### 2. Deterministic Mock Audio Source (Week 1, Days 3 & 4)
+### 2. Deterministic Mock Audio Source (Days 3 & 4)
 - **Module:** `voicebot.mock_microphone`
 - **Class:** `MockMicrophone`
 - **Consistency Guarantee:** Generates 100% reproducible, deterministic `AudioChunk` streams without requiring physical hardware or paid cloud APIs (Mock mode by default).
@@ -33,7 +33,7 @@
 
 ---
 
-### 3. Deterministic Audio Chunker (Week 1, Days 3 & 4)
+### 3. Deterministic Audio Chunker (Days 3 & 4)
 - **Module:** `voicebot.chunker`
 - **Classes / Functions:** `AudioChunker`, `chunk_audio`
 - **Features:**
@@ -46,7 +46,19 @@
 
 ---
 
-### 4. Audio Device Adapter & Permissions (Week 2, Days 8 & 9)
+### 4. CLI Audio Streaming Demonstration (Days 5 & 6)
+- **Module:** `voicebot.cli`
+- **Features:**
+  - Streams audio chunks in real-time or batch mode.
+  - Formats and displays metadata per chunk: Sequence ID, Timestamp, Format (Hz, ch, bit depth), Frame count, and Byte size.
+  - Displays a summary footer with total chunks, frames, bytes, and duration.
+  - Fully configurable via command-line flags (`--sample-rate`, `--channels`, `--chunk-count`, `--frames-per-chunk`, `--realtime`).
+
+---
+
+## Week 2 Deliverables (Days 8–14: Lifecycle, VAD & Bounded Buffer)
+
+### 5. Audio Device Adapter & Permissions (Days 8 & 9)
 - **Module:** `voicebot.device`
 - **Classes / Enums:** `PermissionState`, `AudioDevice`, `AudioDeviceAdapter`, `MockAudioDeviceAdapter`
 - **Features:**
@@ -57,7 +69,7 @@
 
 ---
 
-### 5. Audio Capture Lifecycle Controller (Week 2, Days 10 & 11)
+### 6. Audio Capture Lifecycle Controller (Days 10 & 11)
 - **Module:** `voicebot.lifecycle`
 - **Classes / Enums:** `LifecycleState`, `AudioLifecycleController`
 - **State Machine Transitions:**
@@ -69,7 +81,7 @@
 
 ---
 
-### 6. Deterministic Voice Activity Detector (Week 2, Days 10 & 11)
+### 7. Deterministic Voice Activity Detector (Days 10 & 11)
 - **Module:** `voicebot.vad`
 - **Classes:** `VoiceActivityDetector`, `VADResult`
 - **Features:**
@@ -81,7 +93,7 @@
 
 ---
 
-### 7. Bounded Audio Stream Buffer & Backpressure (Week 2, Days 12 & 13)
+### 8. Bounded Audio Stream Buffer & Backpressure (Days 12 & 13)
 - **Module:** `voicebot.buffer`
 - **Classes / Enums:** `BoundedAudioBuffer`, `DropStrategy`, `BufferStatistics`
 - **Features:**
@@ -93,7 +105,7 @@
 
 ---
 
-### 8. Robustness Suite & Diagnostics Telemetry (Week 2, Day 14)
+### 9. Robustness Suite & Diagnostics Telemetry (Day 14)
 - **Modules:** `voicebot.diagnostics`, `tests/test_audio_pipeline.py`
 - **Features:**
   - `collect_diagnostics()` snapshots lifecycle state, buffer statistics, and VAD metrics into an exportable `PipelineDiagnostics` dataclass.
@@ -101,26 +113,25 @@
 
 ---
 
-### 9. CLI Streaming & Pipeline Demonstration (Days 5, 6 & 14)
+### 10. Live Audio Pipeline & VAD Dashboard Demo (Day 14)
 - **Module:** `voicebot.cli`
 - **Features:**
-  - Streams audio chunks in real-time or batch mode.
-  - Formats and displays metadata per chunk: Sequence ID, Timestamp, RMS Energy, VAD status badge, Buffer occupancy, and Byte size.
-  - Supports dual modes: default Week 1 chunking stream and Week 2 `--pipeline` dashboard.
-  - Fully configurable via flags (`--sample-rate`, `--channels`, `--chunk-count`, `--frames-per-chunk`, `--realtime`, `--pipeline`, `--demo-pause`).
+  - Extended with `--pipeline` flag for a live visual ASCII terminal dashboard.
+  - Displays real-time RMS energy meters, VAD speech/silence badges (`SPEECH [ON]` / `SILENCE [OFF]`), and buffer telemetry.
+  - Simulated assistant pauses via `--demo-pause` and realistic pacing via `--realtime`.
 
 ---
 
-## Running the CLI Demonstration
+## Running the Demonstrations
 
 From the repository root:
 
-### Week 1 Baseline Demo:
+### Week 1 Baseline Demo (Days 5 & 6):
 ```powershell
 python projects/sde-2-voicebot/src/voicebot/cli.py
 ```
 
-### Week 2 Pipeline & VAD Live Demo:
+### Week 2 Pipeline & VAD Live Demo (Day 14):
 ```powershell
 python projects/sde-2-voicebot/src/voicebot/cli.py --pipeline --frames-per-chunk 1600 --chunk-count 10 --demo-pause --realtime
 ```
@@ -145,13 +156,17 @@ $env:PYTHONPATH="projects/sde-2-voicebot/src"; python -m unittest discover -s pr
 
 ## Comprehensive Test Suite Summary (163 / 163 Tests Passing - 100% Success)
 
+### Week 1 Tests (66 Tests):
 - **`test_schemas.py` (24 tests):** Format initialization, boundary values, channel/sample-rate validation, immutability, and docstring checks.
 - **`test_mock_microphone.py` (14 tests):** Chunk count, monotonic sequencing, drift-free timestamps, determinism, and backward-compatible positional constructor.
 - **`test_chunker.py` (12 tests):** Buffer and stream chunking, partial tail chunks, timing validation on empty streams, and convenience functions.
 - **`test_chunk_validation.py` (16 tests):** Valid happy paths across 8kHz to 48kHz, empty buffer rejection, invalid types, corrupt/misaligned frame detection, and CLI demo execution.
+
+### Week 2 Tests (97 Tests):
 - **`test_device.py` (35 tests):** Device selection, permission states (`PROMPT`, `GRANTED`, `DENIED`, `UNAVAILABLE`), immediate rejections, mid-stream revocation.
 - **`test_lifecycle.py` (23 tests):** Lifecycle state machine (`start`, `pause`, `resume`, `stop`), transition matrix, pause frame suppression, resource cleanup.
 - **`test_vad.py` (15 tests):** RMS energy calculation, silence vs speech, debounce duration, transient click rejection, sustained speech triggers.
 - **`test_buffer.py` (16 tests):** Bounded ring buffer, 80% watermark backpressure, 3 drop strategies, dropped chunk counter, sequence gap and late chunk tracking.
 - **`test_audio_pipeline.py` (8 tests):** Sequence gap handling, late/out-of-order chunk recovery, noise discrimination, full end-to-end audio pipeline lifecycle.
-- **Total:** **163 / 163 PASSED (177 subtests passed, 0 failures, 0 errors in ~0.35s)**
+
+**Grand Total:** **163 / 163 PASSED (177 subtests passed, 0 failures, 0 errors in ~0.35s)**
