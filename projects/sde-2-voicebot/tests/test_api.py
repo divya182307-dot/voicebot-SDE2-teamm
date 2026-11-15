@@ -1,11 +1,18 @@
 
 import json
 import logging
+import threading
 from datetime import datetime, timezone, timedelta
 
 from fastapi.testclient import TestClient
 
-from app.main import app, idempotency_store, event_history, JSONFormatter
+from app.main import (
+    app,
+    idempotency_store,
+    event_history,
+    event_subscribers,
+    JSONFormatter,
+)
 from app.repository import session_repository
 from app.config import settings, load_settings
 
@@ -17,6 +24,7 @@ def setup_function():
     session_repository.sessions.clear()
     idempotency_store.clear()
     event_history.clear()
+    event_subscribers.clear()
 
 
 def create_session():
@@ -241,23 +249,60 @@ def test_events_are_returned_in_order():
 def test_event_stream_returns_server_sent_events():
     session_id = create_session()
 
-    client.post(
+    # Record an event before connecting.
+    first_response = client.post(
         f"/sessions/{session_id}/events",
         json={"event_type": "start"}
     )
+    assert first_response.status_code == 200
 
-    response = client.get(
-        f"/sessions/{session_id}/events/stream"
-    )
+    with client.stream(
+        "GET",
+        f"/sessions/{session_id}/events/stream",
+        timeout=5
+    ) as response:
 
-    assert response.status_code == 200
-    assert response.headers["content-type"].startswith(
-        "text/event-stream"
-    )
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith(
+            "text/event-stream"
+        )
 
-    assert "event: start" in response.text
-    assert "data:" in response.text
-    assert "id: 1" in response.text
+        lines = response.iter_lines()
+
+        # Receive the previously recorded event.
+        received_start = False
+
+        for line in lines:
+            if line == "event: start":
+                received_start = True
+                break
+
+        assert received_start
+
+        # Publish another event while the stream is connected.
+        post_result = {}
+
+        def publish_event():
+            post_result["response"] = client.post(
+                f"/sessions/{session_id}/events",
+                json={"event_type": "pause"}
+            )
+
+        worker = threading.Thread(target=publish_event)
+        worker.start()
+
+        received_pause = False
+
+        for line in lines:
+            if line == "event: pause":
+                received_pause = True
+                break
+
+        worker.join(timeout=5)
+
+        assert not worker.is_alive()
+        assert post_result["response"].status_code == 200
+        assert received_pause
 
 
 def test_event_history_session_not_found():
@@ -348,3 +393,33 @@ def test_structured_logging_contains_correlation_id():
     assert log_data["message"] == "Test log message"
     assert log_data["correlation_id"] == "test-correlation-789"
     assert "timestamp" in log_data
+
+
+def test_oversized_body_without_content_length_is_rejected():
+    oversized_body = b"x" * (settings.max_request_bytes + 1)
+
+    response = client.post(
+        "/sessions",
+        content=oversized_body,
+        headers={"Transfer-Encoding": "chunked"},
+    )
+
+    assert response.status_code == 413
+    assert response.json()["code"] == "PAYLOAD_TOO_LARGE"
+    assert response.json()["correlation_id"]
+    assert response.headers.get("X-Correlation-ID")
+
+
+def test_oversized_body_with_incorrect_content_length_is_rejected():
+    oversized_body = b"x" * (settings.max_request_bytes + 1)
+
+    response = client.post(
+        "/sessions",
+        content=oversized_body,
+        headers={"Content-Length": "1"},
+    )
+
+    assert response.status_code == 413
+    assert response.json()["code"] == "PAYLOAD_TOO_LARGE"
+    assert response.json()["correlation_id"]
+    assert response.headers.get("X-Correlation-ID")
