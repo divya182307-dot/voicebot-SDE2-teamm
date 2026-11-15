@@ -2,6 +2,7 @@
 import uuid
 import json
 import logging
+import asyncio
 from threading import Lock
 from datetime import datetime, timezone
 from typing import Literal
@@ -29,9 +30,12 @@ class JSONFormatter(logging.Formatter):
             "logger": record.name,
             "message": record.getMessage(),
             "correlation_id": getattr(
-                record, "correlation_id", None
+                record,
+                "correlation_id",
+                None
             )
         }
+
         return json.dumps(log_data)
 
 
@@ -59,6 +63,11 @@ app.add_middleware(RequestIDMiddleware)
 # In-memory stores
 idempotency_store = {}
 event_history = {}
+
+# Active SSE subscribers, grouped by session ID.
+# Each subscriber contains its event loop and asyncio queue.
+event_subscribers = {}
+
 idempotency_lock = Lock()
 
 
@@ -78,8 +87,12 @@ async def startup_event():
     )
 
 
+# Error handlers
 @app.exception_handler(StarletteHTTPException)
-async def http_error_handler(request: Request, exc: StarletteHTTPException):
+async def http_error_handler(
+    request: Request,
+    exc: StarletteHTTPException
+):
     error = create_error(
         code="HTTP_ERROR",
         message="The request could not be completed.",
@@ -114,7 +127,10 @@ async def request_validation_error_handler(
 
 
 @app.exception_handler(ValueError)
-async def validation_error_handler(request: Request, exc: ValueError):
+async def validation_error_handler(
+    request: Request,
+    exc: ValueError
+):
     error = create_error(
         code="INVALID_SESSION_TRANSITION",
         message="This session state change is not allowed.",
@@ -128,6 +144,7 @@ async def validation_error_handler(request: Request, exc: ValueError):
     )
 
 
+# Basic endpoints
 @app.get("/")
 def home():
     return {
@@ -151,6 +168,7 @@ def readiness_check():
     }
 
 
+# Session endpoints
 @app.post("/sessions")
 def create_session(request: Request):
     session = session_repository.create()
@@ -160,7 +178,9 @@ def create_session(request: Request):
 
     logger.info(
         "Session created",
-        extra={"correlation_id": get_correlation_id(request)}
+        extra={
+            "correlation_id": get_correlation_id(request)
+        }
     )
 
     return {
@@ -179,6 +199,7 @@ def get_session(session_id: str):
     return session.model_dump(mode="json")
 
 
+# Event schemas
 class MockEvent(BaseModel):
     event_type: Literal[
         "start",
@@ -202,6 +223,7 @@ EVENT_TRANSITIONS = {
 }
 
 
+# Record events and notify connected SSE clients
 def record_event(
     session_id: str,
     event_type: str,
@@ -219,9 +241,20 @@ def record_event(
 
     events.append(event_record)
 
+    # Notify active subscribers in event order.
+    for loop, queue in list(
+        event_subscribers.get(session_id, set())
+    ):
+        if not loop.is_closed():
+            loop.call_soon_threadsafe(
+                queue.put_nowait,
+                event_record
+            )
+
     return event_record
 
 
+# Process session events
 @app.post("/sessions/{session_id}/events")
 def mock_session_event(
     session_id: str,
@@ -245,10 +278,14 @@ def mock_session_event(
             previous_result = idempotency_store.get(store_key)
 
             if previous_result is not None:
+
                 if previous_result["event_type"] != event.event_type:
                     raise StarletteHTTPException(
                         status_code=409,
-                        detail="Idempotency key was already used for another event."
+                        detail=(
+                            "Idempotency key was already used "
+                            "for another event."
+                        )
                     )
 
                 logger.info(
@@ -288,12 +325,15 @@ def mock_session_event(
 
         logger.info(
             "Session event processed",
-            extra={"correlation_id": get_correlation_id(request)}
+            extra={
+                "correlation_id": get_correlation_id(request)
+            }
         )
 
         return response
 
 
+# Retrieve stored event history
 @app.get("/sessions/{session_id}/events")
 def get_session_events(session_id: str):
     if session_repository.get(session_id) is None:
@@ -309,23 +349,73 @@ def get_session_events(session_id: str):
     }
 
 
+# Live Server-Sent Events endpoint
 @app.get("/sessions/{session_id}/events/stream")
-async def stream_session_events(session_id: str):
+async def stream_session_events(
+    session_id: str,
+    request: Request
+):
     if session_repository.get(session_id) is None:
         raise StarletteHTTPException(status_code=404)
 
+    loop = asyncio.get_running_loop()
+    queue = asyncio.Queue()
+
+    # Take the history snapshot and register the subscriber
+    # under the same lock so no event is missed between them.
     with idempotency_lock:
         events = list(event_history.get(session_id, []))
 
-    async def event_generator():
-        for event_record in events:
-            event_data = json.dumps(event_record)
+        subscriber = (loop, queue)
 
-            yield (
-                f"id: {event_record['event_id']}\n"
-                f"event: {event_record['event_type']}\n"
-                f"data: {event_data}\n\n"
-            )
+        event_subscribers.setdefault(
+            session_id,
+            set()
+        ).add(subscriber)
+
+    async def event_generator():
+        try:
+            # Send previously recorded events first.
+            for event_record in events:
+                event_data = json.dumps(event_record)
+
+                yield (
+                    f"id: {event_record['event_id']}\n"
+                    f"event: {event_record['event_type']}\n"
+                    f"data: {event_data}\n\n"
+                )
+
+            # Continue waiting for newly created events.
+            while not await request.is_disconnected():
+
+                try:
+                    event_record = await asyncio.wait_for(
+                        queue.get(),
+                        timeout=15
+                    )
+
+                    event_data = json.dumps(event_record)
+
+                    yield (
+                        f"id: {event_record['event_id']}\n"
+                        f"event: {event_record['event_type']}\n"
+                        f"data: {event_data}\n\n"
+                    )
+
+                except asyncio.TimeoutError:
+                    # Keep the SSE connection alive.
+                    yield ": keep-alive\n\n"
+
+        finally:
+            # Remove disconnected clients from the subscriber store.
+            with idempotency_lock:
+                subscribers = event_subscribers.get(session_id)
+
+                if subscribers is not None:
+                    subscribers.discard(subscriber)
+
+                    if not subscribers:
+                        event_subscribers.pop(session_id, None)
 
     return StreamingResponse(
         event_generator(),
