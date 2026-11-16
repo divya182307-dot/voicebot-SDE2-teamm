@@ -66,8 +66,10 @@ def run_all_tests():
                 sig = inspect.signature(func)
                 if "engine" in sig.parameters:
                     from test_mock_reasoning import fixed_time, engine as make_engine
-                    ft = fixed_time()
-                    eng = make_engine(ft)
+                    ft_fn = getattr(fixed_time, "__wrapped__", fixed_time)
+                    ft = ft_fn()
+                    eng_fn = getattr(make_engine, "__wrapped__", make_engine)
+                    eng = eng_fn(ft)
                     func(eng)
                 else:
                     func()
