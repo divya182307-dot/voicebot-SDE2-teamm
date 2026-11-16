@@ -208,7 +208,40 @@ Defined and documented the core data contracts in `app/schemas/`:
 
 ---
 
-### 🧪 Running the Tests
+#### 📅 Week 2 / W3 Implementation: Production Adapters, Hardening & Voice CLI
+
+1. **Opt-In Capture Adapter with Sampling & Size Limits (`app/vision/capture_adapter.py`)**:
+   - **Strict Opt-In Policy:** Capture is locked by default. Calls to `capture()` without prior `opt_in()` immediately raise `CaptureNotAuthorizedException`. Supports scoped authorization via `with adapter.authorized_session(): ...`.
+   - **Sliding-Window Rate Limiter:** Enforces minimum capture intervals (default 0.5s) and rolling 1-second request ceilings (default 2 fps) to prevent CPU/GPU saturation, raising `SamplingLimitExceededException` upon breach.
+   - **Payload & Resolution Guard:** Restricts capture dimensions (max 1920x1080) and raw payload size (max 2.0MB). Dynamically scales down oversized frames while preserving aspect ratio, or strictly rejects with `CaptureSizeLimitExceededException`.
+   - **Capture Metrics:** Tracks total requests, accepted frames, throttled requests, and rejected sizes.
+
+2. **OCR & Vision Adapter Interface (`app/vision/vision_adapter.py`)**:
+   - **Abstract Interface:** Defines `BaseVisionAdapter` contract for OCR (`extract_text`), visual element analysis (`analyze_visuals`), and full frame analysis (`process_screen_context`).
+   - **Deterministic Implementation:** High-performance, offline `DeterministicVisionAdapter` returning structured `OCRResult` and `VisionAnalysisResult` with bounding boxes and confidence scores.
+   - **Sensitive Data & PII Redaction:** Integrates `RuleBasedSensitiveDataScanner` to automatically detect and redact API keys (`sk-...`), bearer tokens, passwords, credit cards, and SSNs.
+
+3. **Bounded Context Builder with Recency, Relevance & Token Budget (`app/context/builder.py`)**:
+   - **Recency Time-Decay Scoring:** Applies exponential time-decay ($e^{-\lambda \Delta t}$) prioritizing immediate user and system events over historical logs.
+   - **Keyword Relevance Selection:** Computes word overlap and semantic match between active user query and context items.
+   - **Stale Context Filtering:** Automatically prunes items exceeding Time-To-Live (TTL), with granular per-type thresholds (e.g. 300s default, 600s for code snippets) and superseded item filtering.
+   - **Strict Token Budget Ceiling:** Accurately estimates token consumption across text, code, and system metadata, packing items strictly under the configured ceiling (e.g. 1024 tokens) to prevent LLM context overflow.
+
+4. **LLM Client Adapter with Timeout, Retry & Structured Output (`app/llm/client_adapter.py`)**:
+   - **Timeout Protection:** Configurable per-request timeout (default 10s) raising `LLMTimeoutException`.
+   - **Exponential Backoff with Jitter:** Automatic retries for transient HTTP 503 / network errors with randomized jitter to prevent thundering herd problems.
+   - **Structured-Output Validation:** Extracts raw JSON from markdown code fences (` ```json `), strips conversational preambles/postambles, and strictly parses into target Pydantic models.
+   - **Malformed-Output Rejection:** Detects truncated JSON, missing braces, unquoted keys, and schema violations, retrying or raising `StructuredOutputValidationException`.
+
+5. **Interactive Voice CLI & Audio Synthesizer (`voice_cli.py`)**:
+   - **Live Voice Interaction:** Interactive terminal dialogue shell with multi-turn conversation support.
+   - **Windows Voice Dictation (`Win + H`):** Direct microphone speech-to-text dictation into the prompt.
+   - **Windows System.Speech (SAPI TTS):** Speaks responses aloud through computer speakers with `--speak`.
+   - **Safety Gate Visualization:** Renders Category A execution vs Category D verbal confirmation gates.
+
+---
+
+### 🧪 Running the Tests (102 Tests Passing)
 
 To run the complete automated test suite locally:
 
@@ -217,73 +250,134 @@ python tests/run_tests.py
 ```
 
 ```text
-======================================================================
- SDE-2 VOICEBOT: AUTOMATED TEST SUITE EXECUTION
-======================================================================
-[*] Task 1: Synthetic Frames & Privacy Enforcement ...
+===========================================================================
+ SDE-2 VOICEBOT: DAY 2 & DAY 3 AUTOMATED TEST SUITE
+===========================================================================
+
+[SUITE] Running: Task 1: Synthetic Frames (Screen Capture Disabled by Default)
+  [PASS] test_all_synthetic_scenarios_generate_valid_screen_context
+  [PASS] test_authorized_session_context_manager
+  [PASS] test_capture_fallback_when_disabled
+  [PASS] test_capture_raises_when_disabled
+  [PASS] test_create_custom_synthetic_frame
+  [PASS] test_explicit_enable_and_disable
   [PASS] test_screen_capture_disabled_by_default
-  [PASS] test_screen_capture_raises_when_disabled
-  [PASS] test_disabled_fallback_returns_zero_image_bytes
-  [PASS] test_authorized_session_allows_capture_and_revokes
-  [PASS] test_manual_enable_and_disable
-  [PASS] test_generate_synthetic_scenario_all_types
-  [PASS] test_redacted_privacy_flag
+  [PASS] test_synthetic_frames_determinism
 
-[*] Task 2: Deterministic Mock Reasoning Engine ...
-  [PASS] test_deterministic_consistency_same_input
-  [PASS] test_error_explanation_grounded_uc02
-  [PASS] test_document_summarization_uc03
-  [PASS] test_sensitive_action_requires_user_approval_uc08
-  [PASS] test_destructive_action_strict_approval_gate
+[SUITE] Running: Task 2: Deterministic Mock Reasoning Engine
+  [PASS] test_destructive_action_category_d_safety_gate
+  [PASS] test_determinism_identical_input_produces_identical_output
+  [PASS] test_uc01_screen_explanation
+  [PASS] test_uc02_error_explanation
+  [PASS] test_uc08_controlled_action_requires_approval
 
-[*] Task 3: Versioned Prompts & Injection Defense ...
-  [PASS] test_prompt_registry_registration_and_retrieval
-  [PASS] test_prompt_v1_0_rendering_and_delimiters
-  [PASS] test_prompt_v1_1_injection_sanitization
-  [PASS] test_orchestrator_prompt_rendering
+[SUITE] Running: Task 3: Versioned Prompts with Trusted/Untrusted Separation
+  [PASS] test_injection_sanitization_prevents_delimiter_breakout
+  [PASS] test_registry_retrieval_and_versioning
+  [PASS] test_registry_unknown_prompt_or_version_raises
+  [PASS] test_trusted_instructions_separated_from_untrusted_content
 
-[*] Task 4: Complete End-to-End Integration ...
-  [PASS] test_end_to_end_integration_flow
+[SUITE] Running: Task 4: Complete End-to-End Pipeline Integration
+  [PASS] test_complete_day2_end_to_end_pipeline
 
-[*] Task 5: Reasoning Request & Result Validation Suite ...
-  [PASS] test_valid_minimal_voice_request
-  [PASS] test_valid_multimodal_request_with_screen_context
-  [PASS] test_valid_multimodal_request_with_visual_context_item
-  [PASS] test_valid_request_boundary_values
-  [PASS] test_valid_informational_response_category_a
-  [PASS] test_valid_sensitive_response_category_c
-  [PASS] test_valid_destructive_response_category_d
-  [PASS] test_invalid_empty_request_id
-  [PASS] test_invalid_whitespace_only_session_id
-  [PASS] test_invalid_empty_user_query
-  [PASS] test_invalid_query_exceeding_max_length
-  [PASS] test_invalid_temperature_out_of_bounds
-  [PASS] test_invalid_max_tokens_out_of_bounds
-  [PASS] test_invalid_multimodal_missing_visual_context
-  [PASS] test_invalid_conversation_history_missing_required_keys
-  [PASS] test_invalid_conversation_history_invalid_role
-  [PASS] test_invalid_conversation_history_empty_content
-  [PASS] test_invalid_conversation_history_turn_overflow
-  [PASS] test_invalid_tool_name_pattern_violations
-  [PASS] test_invalid_empty_response_id
-  [PASS] test_invalid_empty_user_intent
-  [PASS] test_invalid_empty_agent_response_text
-  [PASS] test_invalid_confidence_score_out_of_bounds
-  [PASS] test_invalid_negative_processing_time
-  [PASS] test_invalid_tool_call_required_without_action_plan
-  [PASS] test_invalid_action_plan_populated_when_tool_call_not_required
-  [PASS] test_invalid_action_steps_non_sequential_numbering
-  [PASS] test_invalid_risk_level_inconsistency
-  [PASS] test_invalid_sensitive_operation_missing_approval_flag
-  [PASS] test_invalid_sensitive_operation_missing_approval_prompt
-  [PASS] test_invalid_destructive_operation_missing_approval_flag
-  [PASS] test_invalid_destructive_operation_missing_approval_prompt
-  [PASS] test_invalid_informational_response_with_approval_prompt
+[SUITE] Running: Task 5: Reasoning Request & Result Validation Suite
+  [PASS] test_edge_case_approval_prompt_boundary_length
+  [PASS] test_edge_case_confidence_boundary_values
+  [PASS] test_edge_case_empty_approval_prompt_coerced_to_none
+  [PASS] test_edge_case_whitespace_stripping
+  [PASS] test_invalid_action_step_sensitive_without_approval
+  [PASS] test_invalid_request_available_tools_invalid_characters
+  [PASS] test_invalid_request_conversation_history_malformed
+  [PASS] test_invalid_request_conversation_history_too_many_turns
+  [PASS] test_invalid_request_empty_or_whitespace_fields
+  [PASS] test_invalid_request_id_too_long
+  [PASS] test_invalid_request_max_tokens_out_of_bounds
+  [PASS] test_invalid_request_multimodal_missing_visual_context
+  [PASS] test_invalid_request_query_too_long
+  [PASS] test_invalid_request_temperature_out_of_bounds
+  [PASS] test_invalid_result_action_plan_without_tool_call_required
+  [PASS] test_invalid_result_category_a_with_approval
+  [PASS] test_invalid_result_category_a_with_approval_prompt
+  [PASS] test_invalid_result_category_c_without_approval
+  [PASS] test_invalid_result_category_d_without_approval
+  [PASS] test_invalid_result_confidence_out_of_bounds
+  [PASS] test_invalid_result_empty_or_whitespace_fields
+  [PASS] test_invalid_result_non_sequential_action_steps
+  [PASS] test_invalid_result_processing_time_negative
+  [PASS] test_invalid_result_risk_level_lower_than_action_steps
+  [PASS] test_invalid_result_sensitive_missing_approval_prompt
+  [PASS] test_invalid_result_tool_call_without_action_plan
+  [PASS] test_valid_reasoning_request_boundaries
+  [PASS] test_valid_reasoning_request_multimodal_with_screen
+  [PASS] test_valid_reasoning_request_multimodal_with_visual_item
+  [PASS] test_valid_reasoning_request_voice_minimal
+  [PASS] test_valid_reasoning_result_destructive_category_d
+  [PASS] test_valid_reasoning_result_informational_category_a
+  [PASS] test_valid_reasoning_result_sensitive_category_c
 
-======================================================================
- TEST SUMMARY: 50 / 50 PASSED (100% SUCCESS)
- Duration: 0.082s
-======================================================================
+[SUITE] Running: Task 6: Opt-In Capture Adapter & OCR/Vision Adapter Interface
+  [PASS] test_authorized_session_context_manager
+  [PASS] test_capture_adapter_metrics
+  [PASS] test_opt_in_enables_capture
+  [PASS] test_opt_in_required_by_default
+  [PASS] test_opt_out_revokes_capture
+  [PASS] test_sampling_rate_limit_min_interval
+  [PASS] test_sampling_rate_limit_sliding_window
+  [PASS] test_sensitive_data_scanner_redaction
+  [PASS] test_size_limits_payload_bytes_exceeded
+  [PASS] test_size_limits_scale_down_aspect_ratio
+  [PASS] test_size_limits_strict_rejection
+  [PASS] test_vision_adapter_analyze_visuals
+  [PASS] test_vision_adapter_detects_sensitive_data_and_pii
+  [PASS] test_vision_adapter_extract_text
+  [PASS] test_vision_adapter_process_screen_context
+
+[SUITE] Running: Task 7: Bounded Context Builder (Recency, Relevance & Budget)
+  [PASS] test_deterministic_reproducibility
+  [PASS] test_priority_weighting
+  [PASS] test_recency_scoring_time_decay
+  [PASS] test_relevance_selection_keyword_overlap
+  [PASS] test_screen_context_dynamic_ingestion
+  [PASS] test_stale_filter_expiration_default_ttl
+  [PASS] test_stale_filter_superseded_items
+  [PASS] test_stale_filter_type_specific_ttl
+  [PASS] test_token_budget_packing_strict_ceiling
+  [PASS] test_token_estimator_context_item
+  [PASS] test_token_estimator_text_and_code
+
+[SUITE] Running: Task 8: LLM Client Adapter (Timeout, Retry & Structured Output)
+  [PASS] test_max_retries_exhausted_raises_exception
+  [PASS] test_non_retriable_auth_error_no_retry
+  [PASS] test_structured_output_parser_clean_json
+  [PASS] test_structured_output_parser_invalid_schema
+  [PASS] test_structured_output_parser_markdown_code_fences
+  [PASS] test_structured_output_validation_exhausted_raises_exception
+  [PASS] test_structured_output_validation_retry_and_recovery
+  [PASS] test_structured_output_validation_success
+  [PASS] test_structured_output_validation_with_domain_reasoning_result
+  [PASS] test_successful_text_generation
+  [PASS] test_timeout_raises_llm_timeout_exception
+  [PASS] test_transient_failure_retry_and_recovery
+
+[SUITE] Running: Task 9: Malformed Output & Schema Error Handling Tests
+  [PASS] test_conversational_preamble_and_postamble_isolation
+  [PASS] test_llm_adapter_exhausted_retries_raises_detailed_exception
+  [PASS] test_llm_adapter_recovers_from_malformed_outputs
+  [PASS] test_malformed_action_steps_in_action_plan
+  [PASS] test_malformed_html_xml_payload
+  [PASS] test_malformed_json_missing_braces
+  [PASS] test_malformed_json_truncated
+  [PASS] test_malformed_json_unquoted_keys
+  [PASS] test_malformed_non_json_conversational_refusal
+  [PASS] test_malformed_reasoning_result_invalid_enum_literals
+  [PASS] test_malformed_reasoning_result_missing_mandatory_fields
+  [PASS] test_malformed_reasoning_result_negative_latency
+  [PASS] test_malformed_reasoning_result_out_of_bounds_confidence
+
+===========================================================================
+ TEST RUN SUMMARY: 102/102 PASSED in 0.569s (Failed: 0)
+===========================================================================
+```
 ```
 
 ---
