@@ -1,14 +1,57 @@
 
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import {
   render,
   screen,
   fireEvent,
+  within,
 } from '@testing-library/react'
 import '@testing-library/jest-dom'
+
+// Mock the audio lifecycle so tests do not need a real microphone.
+const audioMock = vi.hoisted(() => ({
+  start: vi.fn(),
+}))
+
+vi.mock('./audio/audioLifecycle', () => {
+  class MockAudioLifecycle {
+    status: 'idle' | 'recording' | 'paused' | 'stopped' = 'idle'
+
+    async start() {
+      await audioMock.start()
+      this.status = 'recording'
+    }
+
+    pause() {
+      this.status = 'paused'
+    }
+
+    resume() {
+      this.status = 'recording'
+    }
+
+    stop() {
+      this.status = 'stopped'
+    }
+  }
+
+  return {
+    AudioLifecycle: MockAudioLifecycle,
+  }
+})
+
 import App from './App'
 
 describe('Academia AI Voice Co-Pilot', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    audioMock.start.mockResolvedValue(undefined)
+  })
+
+  // -----------------------------------------
+  // EXISTING APPLICATION TESTS
+  // -----------------------------------------
+
   it('should display the application heading', () => {
     render(<App />)
 
@@ -56,7 +99,7 @@ describe('Academia AI Voice Co-Pilot', () => {
 
     expect(
       screen.getByRole('heading', {
-        name: /Transcript Timeline \(5 messages\)/,
+        name: /Transcript Timeline \(\s*5 messages\s*\)/,
       })
     ).toBeInTheDocument()
 
@@ -118,6 +161,240 @@ describe('Academia AI Voice Co-Pilot', () => {
 
     expect(
       screen.getByText('Session stopped successfully')
+    ).toBeInTheDocument()
+  })
+
+  // -----------------------------------------
+  // MENTOR FEEDBACK 1: PAUSE AND RESUME
+  // -----------------------------------------
+
+  it('should pause and resume recording successfully', async () => {
+    render(<App />)
+
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Start Recording',
+      })
+    )
+
+    expect(
+      await screen.findByText('● Recording in progress')
+    ).toBeInTheDocument()
+
+    const pauseButton = screen.getByRole('button', {
+      name: 'Pause Recording',
+    })
+
+    fireEvent.click(pauseButton)
+
+    expect(
+      screen.getByText('Recording paused')
+    ).toBeInTheDocument()
+
+    expect(pauseButton).toBeDisabled()
+
+    const resumeButton = screen.getByRole('button', {
+      name: 'Resume Recording',
+    })
+
+    expect(resumeButton).toBeEnabled()
+
+    fireEvent.click(resumeButton)
+
+    expect(
+      screen.getByText('● Recording in progress')
+    ).toBeInTheDocument()
+
+    expect(pauseButton).toBeEnabled()
+    expect(resumeButton).toBeDisabled()
+  })
+
+  // -----------------------------------------
+  // MENTOR FEEDBACK 2: INTERIM TO FINAL
+  // -----------------------------------------
+
+  it('should convert interim transcript to final and update revision and confidence', () => {
+    render(<App />)
+
+    const interimArticle = screen
+      .getAllByRole('article')
+      .find((article) =>
+        article.textContent?.includes('Transcript Type: Interim')
+      )
+
+    expect(interimArticle).toBeDefined()
+
+    const article = within(interimArticle!)
+
+    // Check the original interim transcript.
+    expect(
+      article.getByText(/Interim/)
+    ).toBeInTheDocument()
+
+    const originalRevision = Number(
+      interimArticle!.textContent?.match(/Revision:\s*(\d+)/)?.[1]
+    )
+
+    expect(originalRevision).toBeGreaterThanOrEqual(0)
+
+    // Finalize the interim transcript.
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Finalize Interim Transcript',
+      })
+    )
+
+    // Check the updated transcript.
+    expect(
+      article.getByText(/Final/)
+    ).toBeInTheDocument()
+
+    expect(
+      article.getByText(/94%/)
+    ).toBeInTheDocument()
+
+    expect(
+      article.getByText('Revised Transcript')
+    ).toBeInTheDocument()
+
+    const updatedRevision = Number(
+      interimArticle!.textContent?.match(/Revision:\s*(\d+)/)?.[1]
+    )
+
+    expect(updatedRevision).toBe(originalRevision + 1)
+  })
+
+  // -----------------------------------------
+  // MENTOR FEEDBACK 3: LOADING STATE
+  // -----------------------------------------
+
+  it('should display the loading state while microphone is starting', async () => {
+    let resolveStart!: () => void
+
+    audioMock.start.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveStart = resolve
+        })
+    )
+
+    render(<App />)
+
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Start Recording',
+      })
+    )
+
+    expect(
+      screen.getByText('Starting microphone...')
+    ).toBeInTheDocument()
+
+    expect(
+      screen.getByRole('button', {
+        name: 'Start Recording',
+      })
+    ).toBeDisabled()
+
+    // Complete the mocked microphone startup.
+    resolveStart()
+
+    expect(
+      await screen.findByText('● Recording in progress')
+    ).toBeInTheDocument()
+
+    expect(
+      screen.queryByText('Starting microphone...')
+    ).not.toBeInTheDocument()
+  })
+
+  // -----------------------------------------
+  // MENTOR FEEDBACK 3: OFFLINE STATE
+  // -----------------------------------------
+
+  it('should display an offline warning when internet is disconnected', () => {
+    render(<App />)
+
+    fireEvent(
+      window,
+      new Event('offline')
+    )
+
+    expect(
+      screen.getByRole('alert')
+    ).toHaveTextContent(
+      'You are offline. Please check your internet connection.'
+    )
+  })
+
+  // -----------------------------------------
+  // MENTOR FEEDBACK 4: SCREEN CONTEXT
+  // -----------------------------------------
+
+  it('should keep Screen Context OFF by default', () => {
+    render(<App />)
+
+    const screenContextCheckbox = screen.getByRole(
+      'checkbox',
+      {
+        name: 'Enable Screen Context',
+      }
+    )
+
+    expect(screenContextCheckbox).not.toBeChecked()
+
+    expect(
+      screen.getByText('Screen Context: OFF')
+    ).toBeInTheDocument()
+
+    expect(
+      screen.getByText(
+        'Screen context is disabled. No screen content is being accessed.'
+      )
+    ).toBeInTheDocument()
+
+    expect(
+      screen.queryByText(
+        'Screen context is enabled. You can start screen sharing below when you are ready.'
+      )
+    ).not.toBeInTheDocument()
+  })
+
+  it('should enable Screen Context only after the user turns it ON', () => {
+    render(<App />)
+
+    const screenContextCheckbox = screen.getByRole(
+      'checkbox',
+      {
+        name: 'Enable Screen Context',
+      }
+    )
+
+    // Initially OFF.
+    expect(screenContextCheckbox).not.toBeChecked()
+
+    // User enables Screen Context.
+    fireEvent.click(screenContextCheckbox)
+
+    expect(screenContextCheckbox).toBeChecked()
+
+    expect(
+      screen.getByText('Screen Context: ON')
+    ).toBeInTheDocument()
+
+    expect(
+      screen.getByText(
+        'Screen context is enabled. You can start screen sharing below when you are ready.'
+      )
+    ).toBeInTheDocument()
+
+    // User disables Screen Context again.
+    fireEvent.click(screenContextCheckbox)
+
+    expect(screenContextCheckbox).not.toBeChecked()
+
+    expect(
+      screen.getByText('Screen Context: OFF')
     ).toBeInTheDocument()
   })
 })
