@@ -1,0 +1,33 @@
+name: Voicebot Integration Tests
+
+on:
+  push:
+    branches:
+      - integration-week1
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Run root tests
+        run: python -m pytest tests/ -q
+
+      - name: Run SDE-2 tests
+        run: python -m pytest projects/sde-2-voicebot/tests/ -q
