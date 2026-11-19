@@ -180,6 +180,7 @@ class MockAudioDeviceAdapter(AudioDeviceAdapter):
 
         self._permission_state = initial_permission
         self._permission_response = permission_response
+        self._disconnect_after_chunks: int | None = None
 
         # Default selected device is the default device (or first available)
         self._selected_device: AudioDevice | None = None
@@ -221,6 +222,8 @@ class MockAudioDeviceAdapter(AudioDeviceAdapter):
         for dev in self._devices:
             if dev.device_id == device_id:
                 self._selected_device = dev
+                if self._permission_state == PermissionState.UNAVAILABLE:
+                    self._permission_state = self._permission_response
                 return dev
 
         raise AudioError(f"Audio device '{device_id}' not found.")
@@ -262,6 +265,43 @@ class MockAudioDeviceAdapter(AudioDeviceAdapter):
         elif not self._devices:
             self._selected_device = None
 
+    def disconnect_device(self, device_id: str | None = None) -> None:
+        """Simulate hardware disconnection of an audio device.
+
+        Args:
+            device_id: Specific device ID to disconnect. Defaults to currently selected device.
+        """
+        if device_id is None:
+            if self._selected_device:
+                device_id = self._selected_device.device_id
+            elif self._devices:
+                device_id = self._devices[0].device_id
+
+        if device_id:
+            self._devices = [d for d in self._devices if d.device_id != device_id]
+            if self._selected_device and self._selected_device.device_id == device_id:
+                self._permission_state = PermissionState.UNAVAILABLE
+
+    def reconnect_device(self, device: AudioDevice) -> None:
+        """Simulate hardware reconnection or re-plugging of an audio device.
+
+        Args:
+            device: AudioDevice instance to restore to available devices.
+        """
+        if not isinstance(device, AudioDevice):
+            raise AudioError("device must be an AudioDevice instance.")
+        if not any(d.device_id == device.device_id for d in self._devices):
+            self._devices.append(device)
+        self._permission_state = PermissionState.GRANTED
+
+    def simulate_disconnect_after(self, chunk_count: int | None) -> None:
+        """Configure mock to simulate mid-stream disconnection after yielding N chunks.
+
+        Args:
+            chunk_count: Number of chunks to emit before triggering disconnection, or None to disable.
+        """
+        self._disconnect_after_chunks = chunk_count
+
     def create_stream(
         self,
         chunk_count: int = 5,
@@ -293,5 +333,16 @@ class MockAudioDeviceAdapter(AudioDeviceAdapter):
             sample_width=device.sample_width,
             raw_data=raw_data,
         )
-        yield from mock_mic.stream()
+
+        emitted_count = 0
+        for chunk in mock_mic.stream():
+            if (
+                self._disconnect_after_chunks is not None
+                and emitted_count >= self._disconnect_after_chunks
+            ):
+                self._disconnect_after_chunks = None  # Reset trigger so fallback can succeed
+                self.disconnect_device(device.device_id)
+                raise AudioError("Hardware error: Audio device was disconnected mid-stream.")
+            emitted_count += 1
+            yield chunk
 

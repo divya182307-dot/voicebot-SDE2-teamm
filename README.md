@@ -1,8 +1,8 @@
-# SDE-2 Voicebot - Audio & VAD Engine (Weeks 1 & 2)
+# SDE-2 Voicebot - Audio, VAD & STT Engine (Weeks 1, 2 & 3)
 
 **Academia - AI Voice Co-Pilot**  
 **Track:** SDE-2 Voicebot (`projects/sde-2-voicebot/`)  
-**Phase:** Week 1 Foundation & Week 2 Audio Lifecycle, VAD & Buffering  
+**Phase:** Week 1 Foundation, Week 2 Audio Lifecycle & VAD, Week 3 Workflow & Integration  
 **Workstream:** W1: Audio and Voice Activity  
 **Owner:** Siri G R  
 
@@ -122,6 +122,61 @@
 
 ---
 
+## Week 3 Deliverables (Days 15–21: Workflow & Integration)
+
+### 11. Safe PCM Audio Normalization (Days 15 & 16)
+- **Module:** `voicebot.normalizer`
+- **Classes:** `AudioNormalizer`, `AudioQualityMetrics`
+- **Features:**
+  - **Dynamic Peak Scaling:** Scales audio chunks to target peak amplitude (default: 0.95) with configurable gain limits (default: 24.0 dB boost cap).
+  - **Comprehensive Multi-Format Support:** Accurately normalizes 8-bit unsigned PCM, 16-bit signed integer PCM, 24-bit packed PCM, and 32-bit floating-point PCM in both mono and stereo.
+  - **Acoustic Metrics:** Computes RMS energy, peak amplitude, DC offset, dynamic range, and clipping counters per audio chunk.
+  - **Zero-Division & Silence Guard:** Safely handles pure digital silence and DC offset signals without floating-point overflow or NaN generation.
+  - **Preservation of Byte Alignment:** Output buffers strictly preserve exact byte lengths and frame boundaries (`len(data) % bytes_per_frame == 0`).
+
+---
+
+### 12. Typed Speech Events & Pre-Roll Processor (Days 15 & 16)
+- **Module:** `voicebot.events`
+- **Classes / Enums:** `EventType`, `AudioEvent`, `SpeechStartedEvent`, `AudioFrameEvent`, `SpeechEndedEvent`, `EventStatistics`, `SpeechEventProcessor`
+- **Features:**
+  - **Lossless Pre-Roll Lookback Buffer:** Maintains a bounded lookback FIFO ring buffer (default: 8 chunks / 160ms) of leading frames during VAD duration debouncing. Flushes retained frames upon confirmed onset to prevent syllable clipping.
+  - **End-to-End Tracing:** Propagates top-level `session_id` and mints unique UUID `correlation_id` per speech turn across all onset, audio frame, and offset events.
+  - **Strict Monotonic Ordering:** Dispatches events with strictly increasing monotonic sequence numbers (`SpeechStartedEvent` $\to$ `AudioFrameEvent`s $\to$ `SpeechEndedEvent`).
+  - **Safe Flush:** Terminal teardown method `flush()` terminates any active speech turn cleanly and resets debouncing state upon stream shutdown or cancellation.
+
+---
+
+### 13. Mid-Stream Device-Loss Recovery & Explicit Cancellation (Days 17 & 18)
+- **Modules:** `voicebot.lifecycle`, `voicebot.device`
+- **Classes / Enums:** `LifecycleState.RECONNECTING`, `LifecycleState.CANCELLED`, `AudioLifecycleController`
+- **Features:**
+  - **Mid-Stream Device Recovery:** Detects unexpected device disconnection during streaming. Rather than crashing, the lifecycle controller transitions to `RECONNECTING`, automatically searches for a valid fallback device (e.g. system default mic), re-requests permissions if needed, and resumes streaming seamlessly while preserving the session ID.
+  - **Explicit Cancellation (`cancel`):** Enables prompt cancellation of an in-progress capture turn (e.g., user barge-in or interruption). Halts audio capture, purges queued chunks from `BoundedAudioBuffer` to immediately release memory, flushes the event processor, and transitions state to `CANCELLED`.
+  - **Mock Device Simulation:** Enhanced `MockAudioDeviceAdapter` supporting deterministic disconnection and simulated auto-reconnect via `disconnect_device()`, `reconnect_device()`, and `simulate_disconnect_after()`.
+
+---
+
+### 14. Speech-to-Text Transcription Bridge & Telemetry (Days 19 & 20)
+- **Module:** `voicebot.transcription_bridge`
+- **Classes:** `TranscriptionBridge`
+- **Features:**
+  - **Teammate Module Integration:** Connects the Audio & VAD pipeline (`SpeechEventProcessor`) directly to the team's `src.voice.adapter.BaseTranscriber` (and deterministic `FakeTranscriber`) and feeds `src.voice.accumulator.SegmentAccumulator`.
+  - **Safe Metadata Correlation:** Subscribes via transcriber event listeners to safely enrich emitted `TranscriptEvent` instances with `metadata["correlation_id"]`, preserving turn correlation end-to-end without violating Pydantic schema validation or mutating frozen audio events.
+  - **Sequence Gap Detection & Telemetry:** Monitors chunk sequence continuity and detects missing chunks. Accurately records gap counts and missing frame telemetry in `get_telemetry()`, pushing only genuine received audio bytes without synthesizing fake audio padding.
+  - **Silence Suppression & False Trigger Rejection:** Sustained silence frames and transient click noises (< 100ms) are suppressed before transcription, ensuring zero spurious transcript events are emitted.
+  - **Turn Finalization:** Receives `SpeechEndedEvent` and triggers `transcriber.finish_audio()`, guaranteeing that `FINAL_TRANSCRIPT` and STT `SPEECH_ENDED` are emitted before utterance conclusion.
+
+---
+
+### 15. Integrated CLI Speech & STT Demonstration (Day 21)
+- **Module:** `voicebot.cli`
+- **Features:**
+  - Extended with `--integration` flag demonstrating the full Week 3 end-to-end voicebot workflow.
+  - Shows real-time audio chunk capture, VAD state, typed event dispatch (`SPEECH_STARTED`, `AUDIO_FRAME`, `SPEECH_ENDED`), sequence numbering, correlation ID tracing, transcription bridge telemetry, and final locked transcript text with word analytics.
+
+---
+
 ## Running the Demonstrations
 
 From the repository root:
@@ -136,25 +191,37 @@ python projects/sde-2-voicebot/src/voicebot/cli.py
 python projects/sde-2-voicebot/src/voicebot/cli.py --pipeline --frames-per-chunk 1600 --chunk-count 10 --demo-pause --realtime
 ```
 
+### Week 3 Integrated Voice & STT Demo (Day 21):
+```powershell
+python projects/sde-2-voicebot/src/voicebot/cli.py --integration
+```
+
 ---
 
 ## Running Tests
 
 From the repository root:
 
+### Run the Complete Test Suite (Weeks 1, 2, and 3):
 ```powershell
 python -m pytest projects/sde-2-voicebot -v
 ```
 
-Or using standard unittest discover:
-
+### Run Specific Test Modules:
 ```powershell
-$env:PYTHONPATH="projects/sde-2-voicebot/src"; python -m unittest discover -s projects/sde-2-voicebot/tests -v
+# Week 3 Transcription Integration Tests (Days 19-20)
+python -m pytest projects/sde-2-voicebot/tests/test_transcription_integration.py -v
+
+# Week 3 Device Recovery & Cancellation Tests (Days 17-18)
+python -m pytest projects/sde-2-voicebot/tests/test_device_recovery.py -v
+
+# Week 3 Normalizer & Speech Event Tests (Days 15-16)
+python -m pytest projects/sde-2-voicebot/tests/test_normalizer.py projects/sde-2-voicebot/tests/test_events.py -v
 ```
 
 ---
 
-## Comprehensive Test Suite Summary (163 / 163 Tests Passing - 100% Success)
+## Comprehensive Test Suite Summary (203 / 203 Tests Passing - 100% Success)
 
 ### Week 1 Tests (66 Tests):
 - **`test_schemas.py` (24 tests):** Format initialization, boundary values, channel/sample-rate validation, immutability, and docstring checks.
@@ -169,4 +236,10 @@ $env:PYTHONPATH="projects/sde-2-voicebot/src"; python -m unittest discover -s pr
 - **`test_buffer.py` (16 tests):** Bounded ring buffer, 80% watermark backpressure, 3 drop strategies, dropped chunk counter, sequence gap and late chunk tracking.
 - **`test_audio_pipeline.py` (8 tests):** Sequence gap handling, late/out-of-order chunk recovery, noise discrimination, full end-to-end audio pipeline lifecycle.
 
-**Grand Total:** **163 / 163 PASSED (177 subtests passed, 0 failures, 0 errors in ~0.35s)**
+### Week 3 Tests (40 Tests):
+- **`test_normalizer.py` (11 tests):** PCM scaling across 8/16/24/32-bit audio formats, gain limits (24 dB), clipping metrics, zero-division protection, byte length and alignment preservation.
+- **`test_events.py` (10 tests):** Typed event contracts (`SpeechStartedEvent`, `AudioFrameEvent`, `SpeechEndedEvent`), immutability, pre-roll lookback FIFO buffer, lossless speech onset, and monotonic sequencing.
+- **`test_device_recovery.py` (10 tests):** Mid-stream device-loss detection, auto-reconnection to fallback device, permission handling on recovery, explicit cancellation (`cancel()`) with buffer release.
+- **`test_transcription_integration.py` (10 tests):** Full end-to-end mock transcription, strict event ordering (`SPEECH_STARTED` $\to$ `FINAL_TRANSCRIPT` $\to$ `SPEECH_ENDED`), sequence gap detection telemetry, correlation ID preservation, silence suppression, and false click rejection.
+
+**Grand Total:** **203 / 203 PASSED (188 subtests passed, 0 failures, 0 errors in ~0.71s)**

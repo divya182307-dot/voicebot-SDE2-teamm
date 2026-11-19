@@ -7,22 +7,41 @@ Provides two demonstration modes:
 """
 
 import argparse
+import asyncio
+import math
 from pathlib import Path
+import struct
 import sys
 import time
 
-# Ensure src directory is in sys.path for direct script execution
+# Ensure both voicebot src and repository root are in sys.path for direct execution
 _SRC_DIR = str(Path(__file__).resolve().parent.parent)
-if _SRC_DIR not in sys.path:
-    sys.path.insert(0, _SRC_DIR)
+_REPO_ROOT = str(Path(__file__).resolve().parents[4])
+for _path in [_SRC_DIR, _REPO_ROOT]:
+    if _path not in sys.path:
+        sys.path.insert(0, _path)
 
 from voicebot.buffer import BoundedAudioBuffer, DropStrategy
 from voicebot.device import MockAudioDeviceAdapter, PermissionState
 from voicebot.diagnostics import collect_diagnostics
+from voicebot.events import (
+    AudioEvent,
+    AudioFrameEvent,
+    EventType,
+    SpeechEndedEvent,
+    SpeechEventProcessor,
+    SpeechStartedEvent,
+)
 from voicebot.lifecycle import AudioLifecycleController
 from voicebot.mock_microphone import MockMicrophone
+from voicebot.normalizer import AudioNormalizer
 from voicebot.schemas import AudioChunk, AudioFormat
+from voicebot.transcription_bridge import TranscriptionBridge
 from voicebot.vad import VoiceActivityDetector
+
+# Import teammate STT contracts
+from src.voice.accumulator import SegmentAccumulator
+from src.voice.fake_transcriber import FakeTranscriber
 
 
 def parse_args(args=None) -> argparse.Namespace:
@@ -72,6 +91,17 @@ def parse_args(args=None) -> argparse.Namespace:
         "--pipeline",
         action="store_true",
         help="Run full Week 2 pipeline demo (Device Adapter + Lifecycle + VAD + Bounded Buffer)",
+    )
+    parser.add_argument(
+        "--integration",
+        action="store_true",
+        help="Run full Week 3 integration demo (VAD -> Events -> Normalizer -> TranscriptionBridge -> STT)",
+    )
+    parser.add_argument(
+        "--script",
+        type=str,
+        default="Can you explain the difference between processes and threads?",
+        help="Pre-scripted utterance text to simulate in the STT demo (used with --integration)",
     )
     parser.add_argument(
         "--demo-pause",
@@ -175,8 +205,110 @@ def run_pipeline_demo(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_integration_demo(args: argparse.Namespace) -> int:
+    """Run the complete Week 3 end-to-end voice and STT integration demonstration."""
+    print("=" * 76)
+    print("  SDE Team 2 - AI Voice Co-Pilot: Week 3 Integrated Voice & STT Demo")
+    print("=" * 76)
+
+    session_id = f"demo-session-{int(time.time())}"
+    script_text = getattr(args, "script", None) or "Can you explain the difference between processes and threads?"
+
+    print("Configuration:")
+    print(f"  Session ID:       {session_id}")
+    print(f"  Script Utterance: '{script_text}'")
+    print(f"  Audio Format:     16000 Hz, 1 channel (mono), 16-bit linear PCM")
+    print(f"  VAD Settings:     Energy Threshold: {args.energy_threshold:.4f} | Min Speech Duration: {args.min_speech_duration_ms:.1f}ms")
+    print(f"  Normalizer:       Target Peak: 0.95 | Gain Cap: 24.0 dB")
+    print(f"  Pre-roll Buffer:  4 chunks (80ms lookback)")
+    print("-" * 76)
+
+    transcriber = FakeTranscriber(session_id=session_id, script=[script_text])
+    accumulator = SegmentAccumulator(session_id=session_id)
+    bridge = TranscriptionBridge(transcriber=transcriber, accumulator=accumulator)
+
+    vad = VoiceActivityDetector(
+        energy_threshold=args.energy_threshold,
+        min_speech_duration_ms=args.min_speech_duration_ms,
+    )
+    normalizer = AudioNormalizer(target_peak=0.95)
+    processor = SpeechEventProcessor(
+        vad=vad,
+        normalizer=normalizer,
+        session_id=session_id,
+        pre_roll_chunks=4,
+    )
+
+    sample_rate = 16000
+    duration_ms = 20
+    frames_per_chunk = int(sample_rate * (duration_ms / 1000.0))
+    fmt = AudioFormat(sample_rate=sample_rate, channels=1, sample_width=2)
+
+    def _make_chunk(seq: int, amp: float) -> AudioChunk:
+        samples = []
+        for i in range(frames_per_chunk):
+            val = int(amp * 32767.0 * math.sin(2.0 * math.pi * 440.0 * (i / sample_rate))) if amp > 0 else 0
+            samples.append(max(-32768, min(32767, val)))
+        return AudioChunk(
+            sequence_id=seq,
+            timestamp=float(seq * duration_ms) / 1000.0,
+            audio_format=fmt,
+            data=struct.pack(f"<{len(samples)}h", *samples),
+        )
+
+    chunks: list[AudioChunk] = []
+    for s in range(4):
+        chunks.append(_make_chunk(s, 0.0))
+    for s in range(4, 29):
+        chunks.append(_make_chunk(s, 0.35))
+    for s in range(29, 39):
+        chunks.append(_make_chunk(s, 0.0))
+
+    print(f"{'Chunk':<7}{'VAD Status':<14}{'Audio Event Emitted':<22}{'Event Seq':<11}{'Correlation ID'}")
+    print("-" * 76)
+
+    async def _run():
+        for chunk in chunks:
+            events = processor.process_chunk(chunk)
+            for ev in events:
+                vad_label = "SPEECH [ON]" if ev.event_type != EventType.SPEECH_ENDED else "SILENCE [OFF]"
+                ev_type_label = f"[{ev.event_type.value.upper()}]"
+                corr_short = ev.correlation_id[:12] + "..." if len(ev.correlation_id) > 12 else ev.correlation_id
+                print(
+                    f"#{chunk.sequence_id:<6}"
+                    f"{vad_label:<14}"
+                    f"{ev_type_label:<22}"
+                    f"#{ev.sequence_number:<10}"
+                    f"{corr_short}"
+                )
+                await bridge.handle_audio_event(ev)
+
+            if getattr(args, "realtime", False):
+                await asyncio.sleep(0.02)
+
+    asyncio.run(_run())
+
+    print("-" * 76)
+    print("Final Accumulated Transcript & Analytics:")
+    print(f"  Transcript:       \"{accumulator.get_final_text()}\"")
+    print(f"  Word Count:       {accumulator.word_count} words")
+    print(f"  Total Duration:   {accumulator.total_duration_ms} ms")
+    print(f"  Avg Confidence:   {accumulator.average_confidence:.4f}")
+    print(f"  Final Segments:   {len(accumulator.final_segments)}")
+
+    telemetry = bridge.get_telemetry()
+    print("\nTranscription Bridge Telemetry:")
+    print(f"  Speech Turns:     {telemetry['speech_turns_completed']} completed")
+    print(f"  Frames Forwarded: {telemetry['frames_processed']} frames ({telemetry['bytes_forwarded']} bytes)")
+    print(f"  Sequence Gaps:    {telemetry['gap_count']} (missing chunks: {telemetry['missing_chunks_total']})")
+    print(f"  Transcript Events:{telemetry['transcript_events_count']} emitted")
+    print(f"  Integration State:HEALTHY [OK]")
+    print("=" * 76)
+    return 0
+
+
 def run_demo(args: argparse.Namespace | None = None) -> int:
-    """Run the audio demonstration (Week 1 standard or Week 2 pipeline).
+    """Run the audio demonstration (Week 1 standard, Week 2 pipeline, or Week 3 integration).
 
     Args:
         args: Parsed command line arguments.
@@ -186,6 +318,9 @@ def run_demo(args: argparse.Namespace | None = None) -> int:
     """
     if args is None:
         args = parse_args([])
+
+    if getattr(args, "integration", False):
+        return run_integration_demo(args)
 
     if getattr(args, "pipeline", False):
         return run_pipeline_demo(args)

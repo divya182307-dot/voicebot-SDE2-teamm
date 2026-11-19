@@ -9,9 +9,20 @@ from voicebot.device import (
     PermissionState,
 )
 from voicebot.diagnostics import PipelineDiagnostics, collect_diagnostics
+from voicebot.events import (
+    AudioEvent,
+    AudioFrameEvent,
+    EventStatistics,
+    EventType,
+    SpeechEndedEvent,
+    SpeechEventProcessor,
+    SpeechStartedEvent,
+)
 from voicebot.lifecycle import AudioLifecycleController, LifecycleState
 from voicebot.mock_microphone import MockMicrophone
+from voicebot.normalizer import AudioNormalizer, AudioQualityMetrics
 from voicebot.schemas import AudioChunk, AudioError, AudioFormat
+from voicebot.transcription_bridge import TranscriptionBridge
 from voicebot.vad import VADResult, VoiceActivityDetector
 
 __all__ = [
@@ -20,16 +31,26 @@ __all__ = [
     "AudioDevice",
     "AudioDeviceAdapter",
     "AudioError",
+    "AudioEvent",
     "AudioFormat",
+    "AudioFrameEvent",
     "AudioLifecycleController",
+    "AudioNormalizer",
+    "AudioQualityMetrics",
     "BoundedAudioBuffer",
     "BufferStatistics",
     "DropStrategy",
+    "EventStatistics",
+    "EventType",
     "LifecycleState",
     "MockAudioDeviceAdapter",
     "MockMicrophone",
     "PermissionState",
     "PipelineDiagnostics",
+    "SpeechEndedEvent",
+    "SpeechEventProcessor",
+    "SpeechStartedEvent",
+    "TranscriptionBridge",
     "VADResult",
     "VoiceActivityDetector",
     "chunk_audio",
