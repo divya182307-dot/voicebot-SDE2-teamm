@@ -40,6 +40,7 @@ from src.voice.exceptions import (
     TranscriberAuthenticationError,
     TranscriberConnectionError,
     TranscriberError,
+    TranscriberQuotaExceededError,
     TranscriberRateLimitError,
     TranscriberServiceUnavailableError,
     TranscriberStateError,
@@ -99,6 +100,7 @@ class ResilienceMetrics(BaseModel):
     retries_exhausted: int = Field(default=0, ge=0, description="Total operations where all retries failed")
     timeouts_encountered: int = Field(default=0, ge=0, description="Count of timeout events caught")
     errors_normalized: int = Field(default=0, ge=0, description="Count of raw exceptions normalized into domain models")
+    fallbacks_triggered: int = Field(default=0, ge=0, description="Count of fallbacks to alternative provider")
 
 
 class ErrorNormalizer:
@@ -128,11 +130,19 @@ class ErrorNormalizer:
         details["original_error_type"] = type(exc).__name__
         details["original_error_message"] = str(exc)
 
-        # 1. Already a typed domain TranscriberError
-        if isinstance(exc, TranscriberError):
+        # 1. Already a specific typed domain TranscriberError subclass
+        if isinstance(exc, TranscriberError) and type(exc) is not TranscriberError:
             if context and hasattr(exc, "details"):
                 exc.details.update(context)
             return exc
+
+        # Check underlying cause if wrapped in generic TranscriberError
+        cause = getattr(exc, "__cause__", None)
+        if cause is not None:
+            if isinstance(cause, (asyncio.TimeoutError, TimeoutError)):
+                return TranscriberTimeoutError(f"STT operation timed out: {cause}", details=details)
+            if isinstance(cause, (ConnectionRefusedError, ConnectionResetError, ConnectionAbortedError, BrokenPipeError)):
+                return TranscriberConnectionError(f"STT provider connection dropped or refused: {cause}", details=details)
 
         # 2. Timeout errors
         if isinstance(exc, (asyncio.TimeoutError, TimeoutError)):
@@ -152,10 +162,22 @@ class ErrorNormalizer:
         msg_lower = str(exc).lower()
         err_type_lower = type(exc).__name__.lower()
 
-        # Rate limit (HTTP 429 / quota exceeded)
-        if "429" in msg_lower or "rate limit" in msg_lower or "quota" in msg_lower:
+        # Connection / unreachable / refused / reset
+        if any(term in msg_lower for term in ("connection", "refused", "unreachable", "reset by peer", "broken pipe")):
+            return TranscriberConnectionError(
+                f"STT provider connection dropped or refused: {exc}",
+                details=details,
+            )
+
+        # Quota exceeded / Rate limit (HTTP 429 / quota exceeded)
+        if "quota" in msg_lower:
+            return TranscriberQuotaExceededError(
+                f"STT provider account quota exhausted: {exc}",
+                details=details,
+            )
+        if "429" in msg_lower or "rate limit" in msg_lower or "too many requests" in msg_lower:
             return TranscriberRateLimitError(
-                f"STT provider rate limit or quota exceeded: {exc}",
+                f"STT provider rate limit exceeded: {exc}",
                 details=details,
             )
 
@@ -205,6 +227,8 @@ class ErrorNormalizer:
         # Determine standardized machine-readable error code
         if isinstance(norm_exc, TranscriberTimeoutError):
             code = "TRANSCRIBER_TIMEOUT"
+        elif isinstance(norm_exc, TranscriberQuotaExceededError):
+            code = "QUOTA_EXCEEDED"
         elif isinstance(norm_exc, TranscriberRateLimitError):
             code = "RATE_LIMIT_EXCEEDED"
         elif isinstance(norm_exc, TranscriberAuthenticationError):
@@ -427,12 +451,17 @@ class ResilientTranscriberWrapper(BaseTranscriber):
         target_transcriber: BaseTranscriber,
         retry_config: Optional[RetryConfig] = None,
         timeout_config: Optional[TimeoutConfig] = None,
+        fallback_transcriber: Optional[BaseTranscriber] = None,
+        enable_fallback: bool = True,
     ) -> None:
         super().__init__(
             session_id=target_transcriber.session_id,
             config=target_transcriber.config,
         )
         self._target: BaseTranscriber = target_transcriber
+        self._fallback: Optional[BaseTranscriber] = fallback_transcriber
+        self._enable_fallback: bool = enable_fallback
+        self._is_fallback_active: bool = False
         self._retry_policy = RetryPolicy(config=retry_config)
         self._timeout_policy = TimeoutPolicy(config=timeout_config)
         self._metrics: ResilienceMetrics = ResilienceMetrics()
@@ -443,6 +472,15 @@ class ResilientTranscriberWrapper(BaseTranscriber):
     @property
     def target(self) -> BaseTranscriber:
         return self._target
+
+    @property
+    def is_fallback_active(self) -> bool:
+        """True if wrapper has switched to its fallback provider."""
+        return self._is_fallback_active
+
+    @property
+    def fallback_transcriber(self) -> Optional[BaseTranscriber]:
+        return self._fallback
 
     @property
     def metrics(self) -> ResilienceMetrics:
@@ -513,6 +551,26 @@ class ResilientTranscriberWrapper(BaseTranscriber):
                 context={"action": "push_audio", "chunk_len": len(chunk)},
             )
         except Exception as exc:
+            if self._enable_fallback and self._fallback and not self._is_fallback_active:
+                norm_err = ErrorNormalizer.normalize_exception(exc)
+                if isinstance(norm_err, (TranscriberRateLimitError, TranscriberConnectionError, TranscriberTimeoutError, TranscriberServiceUnavailableError, TranscriberQuotaExceededError)):
+                    logger.warning("Resilient wrapper target failed with %s; falling back to alternative provider.", norm_err)
+                    self._is_fallback_active = True
+                    self._metrics.fallbacks_triggered += 1
+                    try:
+                        self._target.remove_event_listener(self._on_target_event)
+                        if not self._target.is_closed:
+                            await self._target.stop()
+                    except Exception:
+                        pass
+                    self._target = self._fallback
+                    self._target.add_event_listener(self._on_target_event)
+                    if not self._target.is_listening:
+                        await self._target.start()
+                    # Push failed chunk to fallback provider
+                    await self._target.push_audio(chunk)
+                    return
+
             # Emit normalized error event
             error_event = ErrorNormalizer.to_error_event(
                 session_id=self._session_id,

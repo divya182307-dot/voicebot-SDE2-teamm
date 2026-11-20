@@ -29,11 +29,19 @@ from src.voice.exceptions import (
     TranscriberAuthenticationError,
     TranscriberConnectionError,
     TranscriberError,
+    TranscriberQuotaExceededError,
     TranscriberRateLimitError,
     TranscriberServiceUnavailableError,
     TranscriberStateError,
     TranscriberTimeoutError,
     VoiceError,
+)
+from src.voice.event_stream import (
+    AudioEvent,
+    AudioEventType,
+    AudioReordererMetrics,
+    AudioStreamReorderer,
+    BackendEventStream,
 )
 from src.voice.fake_transcriber import (
     FakeTranscriber,
@@ -96,6 +104,7 @@ __all__ = [
     "TranscriberConnectionError",
     "TranscriberTimeoutError",
     "TranscriberRateLimitError",
+    "TranscriberQuotaExceededError",
     "TranscriberAuthenticationError",
     "TranscriberServiceUnavailableError",
     "TranscriberStateError",
@@ -162,4 +171,10 @@ __all__ = [
     "out_of_order_final_events",
     "duplicate_final_events",
     "error_event_stream",
+    # W1 Audio Events & W5 Backend Event Stream (Days 19-20)
+    "AudioEventType",
+    "AudioEvent",
+    "AudioReordererMetrics",
+    "AudioStreamReorderer",
+    "BackendEventStream",
 ]

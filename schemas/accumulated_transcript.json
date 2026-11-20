@@ -232,6 +232,20 @@
       },
       "title": "Errors",
       "type": "array"
+    },
+    "low_confidence_count": {
+      "default": 0,
+      "description": "Count of low-confidence segments observed",
+      "minimum": 0,
+      "title": "Low Confidence Count",
+      "type": "integer"
+    },
+    "revisions_count": {
+      "default": 0,
+      "description": "Count of interim hypothesis revisions",
+      "minimum": 0,
+      "title": "Revisions Count",
+      "type": "integer"
     }
   },
   "title": "AccumulatedTranscript",

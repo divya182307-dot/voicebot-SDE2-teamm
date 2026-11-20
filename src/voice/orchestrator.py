@@ -39,8 +39,15 @@ from src.voice.exceptions import (
     AudioPreprocessingError,
     OrchestratorError,
     OrchestratorStateError,
+    SessionMismatchError,
     TranscriberAudioError,
     TranscriberError,
+)
+from src.voice.event_stream import (
+    AudioEvent,
+    AudioEventType,
+    AudioStreamReorderer,
+    BackendEventStream,
 )
 from src.voice.fake_transcriber import FakeTranscriber
 from src.voice.preprocessing import (
@@ -79,6 +86,7 @@ class OrchestratorState(str, Enum):
     STOPPING = "stopping"
     STOPPED = "stopped"
     ERROR = "error"
+    CANCELLED = "cancelled"
 
 
 class OrchestratorMetrics(BaseModel):
@@ -102,6 +110,18 @@ class OrchestratorMetrics(BaseModel):
     retries_exhausted: int = Field(default=0, ge=0, description="Count of operations where retries were exhausted")
     timeouts_encountered: int = Field(default=0, ge=0, description="Count of timeout events encountered")
     errors_normalized: int = Field(default=0, ge=0, description="Count of raw exceptions normalized into domain models")
+    interim_revisions_emitted: int = Field(default=0, ge=0, description="Count of interim hypothesis revision events emitted")
+    finalizations_emitted: int = Field(default=0, ge=0, description="Count of finalization events emitted")
+    low_confidence_segments_detected: int = Field(default=0, ge=0, description="Count of low-confidence segments detected")
+    low_confidence_segments_suppressed: int = Field(default=0, ge=0, description="Count of low-confidence segments suppressed")
+    cancellations_count: int = Field(default=0, ge=0, description="Count of cancellation requests executed")
+    fallbacks_triggered: int = Field(default=0, ge=0, description="Count of automatic fallbacks to mock provider")
+    is_fallback_active: bool = Field(default=False, description="True if currently operating on fallback mock provider")
+    audio_events_received: int = Field(default=0, ge=0, description="Count of W1 AudioEvents ingested")
+    audio_chunks_reordered: int = Field(default=0, ge=0, description="Count of out-of-order audio chunks reordered")
+    missing_audio_chunks_detected: int = Field(default=0, ge=0, description="Count of missing audio chunks detected")
+    stale_audio_chunks_dropped: int = Field(default=0, ge=0, description="Count of stale audio chunks dropped")
+    backend_events_published: int = Field(default=0, ge=0, description="Count of events published to BackendEventStream")
 
 
 class OrchestratorConfig(BaseModel):
@@ -150,6 +170,42 @@ class OrchestratorConfig(BaseModel):
     reconciliation_config: Optional[ReconciliationConfig] = Field(
         default=None,
         description="Configuration for stream ordering and duplicate suppression",
+    )
+    confidence_threshold: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Minimum confidence score [0.0, 1.0] for transcript segments",
+    )
+    low_confidence_action: str = Field(
+        default="tag",
+        description="Policy for handling low-confidence segments: 'tag', 'filter', or 'ignore'",
+    )
+    enforce_session_id: bool = Field(
+        default=True,
+        description="Enforce that all ingested and produced events match orchestrator session_id",
+    )
+    enable_mock_fallback: bool = Field(
+        default=True,
+        description="Automatically fall back to FakeTranscriber when primary provider fails with quota or network errors",
+    )
+    fallback_script: Optional[Union[str, List[str]]] = Field(
+        default=None,
+        description="Speech transcript script used if falling back to FakeTranscriber",
+    )
+    enable_audio_reordering: bool = Field(
+        default=True,
+        description="Enable reordering of out-of-order audio chunks and missing packet handling",
+    )
+    audio_reorder_window: int = Field(
+        default=5,
+        ge=1,
+        le=50,
+        description="Sliding window size for buffering out-of-order audio chunks",
+    )
+    fill_missing_audio_gaps: bool = Field(
+        default=True,
+        description="Generate synthetic silence chunks for missing audio gaps to preserve STT timeline",
     )
 
 
@@ -211,18 +267,28 @@ class TranscriptionOrchestrator:
         if accumulator is not None:
             self._accumulator: SegmentAccumulator = accumulator
         else:
+            acc_cfg = self._config.accumulator_config or AccumulatorConfig(
+                enforce_session_id=self._config.enforce_session_id,
+                confidence_threshold=self._config.confidence_threshold,
+                filter_low_confidence=(self._config.low_confidence_action == "filter"),
+            )
             self._accumulator = SegmentAccumulator(
                 session_id=self._session_id,
-                config=self._config.accumulator_config,
+                config=acc_cfg,
             )
 
-        # Initialize or bind transcript reconciler (Days 10-11)
+        # Initialize or bind transcript reconciler (Days 10-11 & 15-16)
         if reconciler is not None:
             self._reconciler: TranscriptReconciler = reconciler
         else:
+            rec_cfg = self._config.reconciliation_config or ReconciliationConfig(
+                enforce_session_id=self._config.enforce_session_id,
+                confidence_threshold=self._config.confidence_threshold,
+                low_confidence_action=self._config.low_confidence_action,
+            )
             self._reconciler = TranscriptReconciler(
                 session_id=self._session_id,
-                config=self._config.reconciliation_config,
+                config=rec_cfg,
             )
 
         # Initialize or bind audio preprocessor (Days 12-13)
@@ -254,6 +320,14 @@ class TranscriptionOrchestrator:
 
         # Background worker task
         self._audio_worker_task: Optional[asyncio.Task[None]] = None
+        self._is_audio_finished: bool = False
+
+        # W1 Audio Event Reorderer & W5 Backend Event Stream (Days 19-20)
+        self._audio_reorderer: AudioStreamReorderer = AudioStreamReorderer(
+            reorder_window=self._config.audio_reorder_window,
+            fill_missing_chunks=self._config.fill_missing_audio_gaps,
+        )
+        self._backend_stream: Optional[BackendEventStream] = None
 
         # Telemetry metrics
         self._metrics: OrchestratorMetrics = OrchestratorMetrics()
@@ -279,13 +353,38 @@ class TranscriptionOrchestrator:
 
     @property
     def is_closed(self) -> bool:
-        """True if the orchestrator has stopped or encountered an error."""
-        return self._state in (OrchestratorState.STOPPED, OrchestratorState.ERROR)
+        """True if the orchestrator has stopped, been cancelled, or encountered an unrecoverable error."""
+        return self._state in (OrchestratorState.STOPPED, OrchestratorState.ERROR, OrchestratorState.CANCELLED)
+
+    @property
+    def is_cancelled(self) -> bool:
+        """True if the orchestrator has been cancelled."""
+        return self._state == OrchestratorState.CANCELLED
+
+    @property
+    def is_fallback_active(self) -> bool:
+        """True if orchestrator has automatically fallen back to the mock provider."""
+        return self._metrics.is_fallback_active
+
+    @property
+    def audio_reorderer(self) -> AudioStreamReorderer:
+        """Return the audio stream reorderer instance."""
+        return self._audio_reorderer
+
+    @property
+    def backend_stream(self) -> Optional[BackendEventStream]:
+        """Return the bound W5 backend event stream if connected."""
+        return self._backend_stream
 
     @property
     def transcriber(self) -> BaseTranscriber:
         """Return the underlying transcriber adapter."""
         return self._transcriber
+
+    @property
+    def low_confidence_segments(self) -> List[TranscriptSegment]:
+        """Return list of low-confidence segments tracked by accumulator."""
+        return self._accumulator.low_confidence_segments
 
     @property
     def accumulator(self) -> SegmentAccumulator:
@@ -347,6 +446,7 @@ class TranscriptionOrchestrator:
         try:
             # Register event listener directly on adapter to guarantee zero-latency capture
             self._transcriber.add_event_listener(self._on_transcriber_event)
+            self._is_audio_finished = False
 
             # Start provider adapter guarded with timeout and retry
             if not self._transcriber.is_listening:
@@ -378,9 +478,21 @@ class TranscriptionOrchestrator:
             self._sync_resilience_metrics()
             logger.info("TranscriptionOrchestrator '%s' is RUNNING.", self._session_id)
         except Exception as exc:
+            self._sync_resilience_metrics()
+            if self._is_fallback_eligible(exc):
+                fb_ok = await self._fallback_to_mock_provider(exc, "start")
+                if fb_ok:
+                    self._audio_worker_task = asyncio.create_task(
+                        self._run_audio_worker(),
+                        name=f"orch-audio-worker-{self._session_id}",
+                    )
+                    async with self._state_lock:
+                        self._state = OrchestratorState.RUNNING
+                    logger.info("TranscriptionOrchestrator '%s' recovered via mock fallback and is RUNNING.", self._session_id)
+                    return
+
             async with self._state_lock:
                 self._state = OrchestratorState.ERROR
-            self._sync_resilience_metrics()
             norm_err = ErrorNormalizer.normalize_exception(exc, {"session_id": self._session_id, "phase": "start"})
             logger.error("Failed to start orchestrator '%s': %s", self._session_id, norm_err)
             raise norm_err from exc
@@ -422,8 +534,72 @@ class TranscriptionOrchestrator:
                 except asyncio.QueueFull:
                     pass
 
+            # Conclude connected backend event stream if active (Days 19-20)
+            if self._backend_stream is not None and not self._backend_stream.is_closed:
+                self._backend_stream.close_nowait()
+
             self._sync_resilience_metrics()
             logger.info("TranscriptionOrchestrator '%s' has STOPPED.", self._session_id)
+
+    async def cancel(self, reason: Optional[str] = None) -> None:
+        """Immediately cancel in-flight transcription and terminate background processing.
+
+        Guarantees clean shutdown: drains ingestion queue, cancels worker task,
+        stops provider adapter, and closes all stream subscriber queues.
+
+        Args:
+            reason: Optional explanation for cancellation.
+        """
+        async with self._state_lock:
+            if self._state in (OrchestratorState.CANCELLED, OrchestratorState.STOPPED):
+                return
+            self._state = OrchestratorState.CANCELLED
+
+        self._metrics.cancellations_count += 1
+        logger.info("Cancelling TranscriptionOrchestrator for session '%s' (reason: %s)", self._session_id, reason)
+
+        # 1. Drain and clear pending audio queue
+        while not self._audio_queue.empty():
+            try:
+                self._audio_queue.get_nowait()
+                self._audio_queue.task_done()
+            except (asyncio.QueueEmpty, ValueError):
+                break
+
+        # 2. Cancel audio worker task
+        if self._audio_worker_task and not self._audio_worker_task.done():
+            self._audio_worker_task.cancel()
+            try:
+                await self._audio_worker_task
+            except (asyncio.CancelledError, Exception):
+                pass
+
+        # 3. Stop provider transcriber
+        try:
+            if self._transcriber and not self._transcriber.is_closed:
+                await self._transcriber.stop()
+        except Exception as stop_exc:
+            logger.debug("Non-critical error stopping transcriber during cancel: %s", stop_exc)
+
+        # 4. Remove event listener
+        try:
+            self._transcriber.remove_event_listener(self._on_transcriber_event)
+        except Exception:
+            pass
+
+        # 5. Notify all active stream subscribers of cancellation
+        for queue in list(self._subscribers):
+            try:
+                queue.put_nowait(None)
+            except asyncio.QueueFull:
+                pass
+
+        # 6. Conclude connected backend event stream if active (Days 19-20)
+        if self._backend_stream is not None and not self._backend_stream.is_closed:
+            self._backend_stream.close_nowait()
+
+        self._sync_resilience_metrics()
+        logger.info("TranscriptionOrchestrator '%s' is CANCELLED.", self._session_id)
 
     async def __aenter__(self) -> TranscriptionOrchestrator:
         """Asynchronous context manager entry."""
@@ -481,6 +657,9 @@ class TranscriptionOrchestrator:
         if self._state == OrchestratorState.IDLE and self._config.auto_start:
             await self.start()
 
+        if self._state == OrchestratorState.CANCELLED:
+            raise OrchestratorStateError("Cannot push audio in state 'cancelled'. Orchestrator has been cancelled.")
+
         if self._state != OrchestratorState.RUNNING:
             raise OrchestratorStateError(
                 f"Cannot push audio in state '{self._state.value}'. Orchestrator must be in RUNNING state."
@@ -505,10 +684,17 @@ class TranscriptionOrchestrator:
         Raises:
             OrchestratorStateError: If called when not in RUNNING state.
         """
+        if self._state == OrchestratorState.CANCELLED:
+            raise OrchestratorStateError("Cannot finish audio in state 'cancelled'. Orchestrator has been cancelled.")
+
         if self._state != OrchestratorState.RUNNING:
             raise OrchestratorStateError(
                 f"Cannot finish audio in state '{self._state.value}'. Expected RUNNING."
             )
+
+        if self._is_audio_finished:
+            return
+        self._is_audio_finished = True
 
         # Signal completion to audio worker via sentinel
         await self._audio_queue.put(None)
@@ -516,6 +702,85 @@ class TranscriptionOrchestrator:
         # Wait for audio worker to complete pushing and call finish_audio on adapter
         if self._audio_worker_task:
             await self._audio_worker_task
+
+    async def push_audio_event(self, event: AudioEvent) -> None:
+        """Ingest an upstream W1 AudioEvent into the transcription pipeline.
+
+        Handles AUDIO_STARTED lifecycle, buffers and re-sequences out-of-order
+        AUDIO_CHUNK events, compensates for missing chunk gaps with synthetic silence,
+        and concludes on AUDIO_ENDED or final chunks.
+
+        Args:
+            event: AudioEvent instance.
+
+        Raises:
+            SessionMismatchError: If enforce_session_id is True and event session differs.
+            OrchestratorStateError: If orchestrator is in an invalid state.
+        """
+        if self._config.enforce_session_id and event.session_id != self._session_id:
+            raise SessionMismatchError(
+                f"AudioEvent session_id '{event.session_id}' does not match orchestrator session '{self._session_id}'."
+            )
+
+        self._metrics.audio_events_received += 1
+
+        if event.event_type == AudioEventType.AUDIO_STARTED:
+            if self._state == OrchestratorState.IDLE and self._config.auto_start:
+                await self.start()
+            self._audio_reorderer.reset()
+            return
+
+        elif event.event_type == AudioEventType.AUDIO_CHUNK:
+            chunks_to_push: List[AudioEvent] = []
+            if self._config.enable_audio_reordering:
+                chunks_to_push = self._audio_reorderer.ingest_chunk(event)
+                reorderer_m = self._audio_reorderer.metrics
+                self._metrics.audio_chunks_reordered = reorderer_m.out_of_order_resolved
+                self._metrics.missing_audio_chunks_detected = reorderer_m.missing_chunks_detected
+                self._metrics.stale_audio_chunks_dropped = reorderer_m.stale_chunks_dropped
+            else:
+                chunks_to_push = [event]
+
+            for chunk_event in chunks_to_push:
+                if chunk_event.data:
+                    await self.push_audio(
+                        chunk_event.data,
+                        sample_rate=chunk_event.sample_rate,
+                        channels=chunk_event.channels,
+                    )
+                if chunk_event.is_last:
+                    await self.finish_audio()
+
+        elif event.event_type == AudioEventType.AUDIO_ENDED:
+            if self._config.enable_audio_reordering:
+                flushed_chunks = self._audio_reorderer.flush()
+                reorderer_m = self._audio_reorderer.metrics
+                self._metrics.audio_chunks_reordered = reorderer_m.out_of_order_resolved
+                self._metrics.missing_audio_chunks_detected = reorderer_m.missing_chunks_detected
+                for chunk_event in flushed_chunks:
+                    if chunk_event.data:
+                        await self.push_audio(
+                            chunk_event.data,
+                            sample_rate=chunk_event.sample_rate,
+                            channels=chunk_event.channels,
+                        )
+            if self._state == OrchestratorState.RUNNING:
+                await self.finish_audio()
+
+    def connect_backend_stream(self, stream: BackendEventStream) -> None:
+        """Connect downstream W5 backend event stream to receive reconciled transcript events.
+
+        Args:
+            stream: BackendEventStream instance.
+
+        Raises:
+            SessionMismatchError: If enforce_session_id is True and stream has a mismatched session.
+        """
+        if self._config.enforce_session_id and stream.session_id and stream.session_id != self._session_id:
+            raise SessionMismatchError(
+                f"BackendEventStream session '{stream.session_id}' does not match orchestrator session '{self._session_id}'."
+            )
+        self._backend_stream = stream
 
     # --------------------------------------------------------------------------
     # Event Streaming & Listeners
@@ -625,6 +890,12 @@ class TranscriptionOrchestrator:
 
     def _on_transcriber_event(self, event: TranscriptEvent) -> None:
         """Synchronously receive, reconcile, and dispatch events emitted by the transcriber."""
+        # Session correlation check (Days 15-16)
+        if self._config.enforce_session_id and event.session_id != self._session_id:
+            raise SessionMismatchError(
+                f"Event session_id '{event.session_id}' does not match orchestrator session '{self._session_id}'."
+            )
+
         # 1. Reconcile, order, and deduplicate event if enabled (Days 10-11)
         if self._config.enable_reconciliation:
             reconciled_event = self._reconciler.reconcile_event(event)
@@ -635,6 +906,12 @@ class TranscriptionOrchestrator:
             self._metrics.out_of_order_resolved = rec_metrics.out_of_order_resolved
             self._metrics.stale_interims_suppressed = rec_metrics.stale_interims_count
             self._metrics.repeated_interims_suppressed = rec_metrics.repeated_interims_count
+            self._metrics.interim_revisions_emitted = rec_metrics.interim_revisions_count
+            self._metrics.finalizations_emitted = rec_metrics.finalizations_count
+            self._metrics.low_confidence_segments_detected = (
+                rec_metrics.low_confidence_tagged_count + rec_metrics.low_confidence_suppressed_count
+            )
+            self._metrics.low_confidence_segments_suppressed = rec_metrics.low_confidence_suppressed_count
 
             # If event was filtered (e.g. duplicate or stale interim), drop it cleanly
             if reconciled_event is None:
@@ -673,6 +950,11 @@ class TranscriptionOrchestrator:
             except Exception as cb_exc:
                 logger.warning("Listener callback error in session '%s': %s", self._session_id, cb_exc)
 
+        # 7. Broadcast to downstream W5 backend event stream (Days 19-20)
+        if self._backend_stream is not None and not self._backend_stream.is_closed:
+            self._backend_stream.publish_nowait(event)
+            self._metrics.backend_events_published += 1
+
     async def _run_audio_worker(self) -> None:
         """Background worker consuming audio chunks from queue and piping to transcriber."""
         chunk_timeout = self._timeout_policy.config.chunk_timeout_seconds
@@ -700,6 +982,14 @@ class TranscriptionOrchestrator:
                                 context={"action": "finish_audio", "session_id": self._session_id},
                             )
                         except Exception as finish_err:
+                            if self._is_fallback_eligible(finish_err):
+                                fb_ok = await self._fallback_to_mock_provider(finish_err, "finish_audio")
+                                if fb_ok:
+                                    try:
+                                        await self._transcriber.finish_audio()
+                                    except Exception:
+                                        pass
+                                    break
                             self._handle_provider_worker_error(finish_err, "finish_audio")
                     break
 
@@ -720,6 +1010,10 @@ class TranscriptionOrchestrator:
                             context={"action": "push_audio", "chunk_len": len(chunk)},
                         )
                 except Exception as push_err:
+                    if self._is_fallback_eligible(push_err):
+                        fb_ok = await self._fallback_to_mock_provider(push_err, "push_audio", failed_chunk=chunk)
+                        if fb_ok:
+                            continue
                     self._handle_provider_worker_error(push_err, "push_audio")
                 finally:
                     self._audio_queue.task_done()
@@ -732,6 +1026,98 @@ class TranscriptionOrchestrator:
             self._state = OrchestratorState.ERROR
             self._sync_resilience_metrics()
             raise
+
+    def _is_fallback_eligible(self, exc: Exception) -> bool:
+        """Check if an exception is eligible for automatic fallback to mock provider."""
+        if not self._config.enable_mock_fallback:
+            return False
+        if self._metrics.is_fallback_active:
+            return False
+
+        from src.voice.exceptions import (
+            TranscriberRateLimitError,
+            TranscriberQuotaExceededError,
+            TranscriberConnectionError,
+            TranscriberTimeoutError,
+            TranscriberServiceUnavailableError,
+            RetryExhaustedError,
+        )
+
+        norm_err = ErrorNormalizer.normalize_exception(exc)
+        eligible_types = (
+            TranscriberRateLimitError,
+            TranscriberQuotaExceededError,
+            TranscriberConnectionError,
+            TranscriberTimeoutError,
+            TranscriberServiceUnavailableError,
+        )
+        if isinstance(norm_err, eligible_types) or isinstance(exc, eligible_types):
+            return True
+        if isinstance(exc, RetryExhaustedError):
+            return True
+        return False
+
+    async def _fallback_to_mock_provider(
+        self,
+        exc: Exception,
+        phase: str,
+        failed_chunk: Optional[bytes] = None,
+    ) -> bool:
+        """Gracefully switch from failing primary provider to mock FakeTranscriber."""
+        norm_err = ErrorNormalizer.normalize_exception(exc, {"session_id": self._session_id, "phase": phase})
+        logger.warning(
+            "Primary provider failed with %s during %s in session '%s'. Falling back to mock provider.",
+            norm_err, phase, self._session_id,
+        )
+
+        # 1. Emit normalized error event indicating fallback
+        error_event = ErrorNormalizer.to_error_event(
+            session_id=self._session_id,
+            exc=norm_err,
+            context={
+                "phase": phase,
+                "fallback_triggered": True,
+                "fallback_provider": "FakeTranscriber",
+                "original_error": norm_err.message,
+            },
+        )
+        self._on_transcriber_event(error_event)
+
+        # 2. Stop and detach old transcriber
+        old_transcriber = self._transcriber
+        try:
+            old_transcriber.remove_event_listener(self._on_transcriber_event)
+            if not old_transcriber.is_closed:
+                await old_transcriber.stop()
+        except Exception:
+            pass
+
+        # 3. Create and start FakeTranscriber
+        try:
+            script = self._config.fallback_script or "Speech recognition fallback active."
+            fallback = FakeTranscriber(
+                session_id=self._session_id,
+                script=script,
+                config=self._config.transcriber_config,
+            )
+            fallback.add_event_listener(self._on_transcriber_event)
+            await fallback.start()
+
+            self._transcriber = fallback
+            self._metrics.fallbacks_triggered += 1
+            self._metrics.is_fallback_active = True
+
+            # 4. If a chunk failed, push it to the fallback provider
+            if failed_chunk:
+                try:
+                    await self._transcriber.push_audio(failed_chunk)
+                except Exception:
+                    pass
+
+            return True
+        except Exception as fb_exc:
+            logger.error("Failed to start fallback transcriber: %s", fb_exc)
+            return False
 
     def _handle_provider_worker_error(self, exc: Exception, phase: str) -> None:
         """Normalize raw worker exception and emit as standardized TranscriptEvent(ERROR)."""

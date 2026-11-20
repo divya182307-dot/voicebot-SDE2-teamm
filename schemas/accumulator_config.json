@@ -25,6 +25,20 @@
       "description": "Whether to keep active interim hypothesis when SPEECH_ENDED arrives",
       "title": "Preserve Interim On Speech Ended",
       "type": "boolean"
+    },
+    "confidence_threshold": {
+      "default": 0.0,
+      "description": "Minimum confidence threshold [0.0, 1.0] for segments",
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Confidence Threshold",
+      "type": "number"
+    },
+    "filter_low_confidence": {
+      "default": false,
+      "description": "Whether to exclude final segments below confidence_threshold from committed text",
+      "title": "Filter Low Confidence",
+      "type": "boolean"
     }
   },
   "title": "AccumulatorConfig",

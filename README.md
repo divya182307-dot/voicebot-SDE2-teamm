@@ -18,7 +18,11 @@ Voicebot/
 │   ├── schemas.md                  # Comprehensive field, unit, and validation documentation
 │   ├── transcriber_adapter.md      # Adapter contract and deterministic fake transcriber docs
 │   ├── segment_accumulator.md      # Ordered segment accumulator and fixture engine docs
-│   └── chunk_to_transcript_demo.md # Day 7 end-to-end streaming demo documentation
+│   ├── chunk_to_transcript_demo.md # Day 7 end-to-end streaming demo documentation
+│   ├── session_revisions_and_confidence.md # Day 15-16 session isolation, revisions, & confidence
+│   ├── cancellation_and_mock_fallback.md   # Day 17-18 in-flight cancellation & mock fallback
+│   ├── audio_events_and_backend_stream.md  # Day 19-20 W1 audio events & W5 backend event stream
+│   └── week3_integration_evidence.md       # Day 21 integration evidence & team gate verification
 ├── schemas/                        # Exported JSON Schemas for Frontend & Backend interoperability
 │   ├── transcript_segment.json
 │   ├── transcript_event.json
@@ -32,24 +36,40 @@ Voicebot/
 ├── scripts/
 │   ├── chunk_to_transcript_demo.py # Day 7 runnable chunk-to-transcript streaming demo
 │   ├── demo_chunk_to_transcript.py # Convenience alias script
-│   └── export_json_schemas.py      # Utility to generate/refresh JSON schemas
+│   ├── export_json_schemas.py      # Utility to generate/refresh JSON schemas
+│   ├── week2_synthetic_demo.py     # Week 2 synthetic audio fixture streaming demo
+│   └── week3_integration_demo.py   # Week 3 end-to-end integration demo (Day 21)
 ├── src/
 │   └── voice/
 │       ├── __init__.py             # Public API exports
 │       ├── accumulator.py          # Ordered SegmentAccumulator and AccumulatedTranscript
 │       ├── adapter.py              # Provider-neutral BaseTranscriber interface & AudioConfig
+│       ├── event_stream.py         # W1 AudioEvents, AudioStreamReorderer & W5 BackendEventStream
 │       ├── exceptions.py           # Domain exception classes
 │       ├── fake_transcriber.py     # Deterministic FakeTranscriber implementation
 │       ├── fixtures.py             # Canonical transcript event fixtures and stream generators
+│       ├── orchestrator.py         # TranscriptionOrchestrator pipeline coordinator
+│       ├── preprocessing.py        # Audio resampler, stereo-to-mono downmixer, & normalizer
+│       ├── reconciliation.py       # TranscriptReconciler ordering, deduplication, & revisions
+│       ├── resilience.py           # Bounded retries, timeouts, and ErrorNormalizer
 │       └── schemas.py              # Pydantic v2 TranscriptSegment & TranscriptEvent data models
 ├── tests/
 │   ├── __init__.py
 │   ├── conftest.py                 # Pytest fixture bindings
 │   ├── test_accumulator.py         # 25 unit tests for ordering, interims, deduplication, and fixtures
 │   ├── test_adapter.py             # 16 unit tests for adapter contract and audio specs
+│   ├── test_cancellation_and_fallback.py # 11 tests for in-flight cancellation & mock fallback
+│   ├── test_contract.py            # 14 tests for provider adapter contract invariants
 │   ├── test_demo.py                # 10 integration and unit tests for Day 7 streaming demo
+│   ├── test_event_stream_integration.py # 21 tests for audio events, reorderer, & backend stream
 │   ├── test_fake_transcriber.py    # 17 unit tests verifying 100% deterministic reproducibility
-│   └── test_schemas.py             # 26 unit tests covering schema constraints and edge cases
+│   ├── test_orchestrator.py        # 16 unit tests for transcription orchestrator
+│   ├── test_preprocessing.py       # 13 tests for audio resampling and normalization
+│   ├── test_reconciliation.py      # 14 tests for stream ordering and deduplication
+│   ├── test_resilience.py          # 17 tests for retries, timeouts, and error normalization
+│   ├── test_schemas.py             # 26 unit tests covering schema constraints and edge cases
+│   ├── test_session_and_revisions.py # 14 tests for sessions, revisions, and confidence thresholds
+│   └── test_week3_integration.py   # 7 tests for Day 21 integration gate & demo stages
 └── pyproject.toml                  # Packaging and pytest configuration
 ```
 
@@ -180,39 +200,126 @@ Voicebot/
 3. **Automated Unit & Integration Tests**:
    - `tests/test_preprocessing.py`: 13 tests covering resampling, stereo downmixing, peak/RMS normalization, and DC centering.
    - `tests/test_resilience.py`: 17 tests covering bounded retries, timeouts, error normalization, and wrapper integration.
-   - **Complete Test Suite**: **154 passing unit tests** across 8 test modules.
 
 ---
 
-## 🎬 Running the Day 7 Demo
+### 📅 Day 14: Contract Test Suite & End-to-End Synthetic Fixture Demo
+1. **Contract Test Suite (`tests/test_contract.py`)**:
+   - Comprehensive provider-adapter contract test suite guaranteeing zero-credential offline operation, state machine invariants, monotonic sequence numbers, non-decreasing timestamps, dual-dispatch parity, and bounded retries.
+2. **Synthetic Fixture Demo (`scripts/week2_synthetic_demo.py`)**:
+   - Prerecorded synthetic 48kHz stereo fixture downmixed and resampled through the orchestrator to test the complete end-to-end pipeline without real audio hardware or vendor API keys.
 
-Run the end-to-end streaming demo via any of the convenient launchers:
+---
 
+### 📅 Day 15–16: Session Association, Revisions, Finalization & Confidence Thresholds (Week 3 Milestone)
+1. **Session Association (`enforce_session_id`)**:
+   - Every transcript event strictly carries and validates `session_id`.
+   - Ingestion guards across `TranscriptionOrchestrator`, `TranscriptReconciler`, and `SegmentAccumulator` reject mismatched or empty session IDs with `SessionMismatchError`.
+   - Multi-session isolation prevents cross-pollination of state across sessions.
+2. **Hypothesis Revisions & Finalization Events**:
+   - Speculative interim hypotheses are tracked with sequential revision counters (`revision=1, 2, ...`, `is_revision=True`, `revision_type="interim_revision"`).
+   - Finalization events (`FINAL_TRANSCRIPT`) carry finalization metadata (`is_finalization=True`, `total_revisions_for_segment`) and reset revision counters upon utterance conclusion.
+   - Speech turn boundary reset clears active interim state cleanly.
+3. **Configurable Confidence Thresholds**:
+   - `confidence_threshold`: Minimum confidence threshold in `[0.0, 1.0]`.
+   - `low_confidence_action`: Configurable policy for low-confidence segments:
+     - `"tag"`: Injects metadata (`is_low_confidence=True`, `confidence`, `confidence_threshold`) into the event payload.
+     - `"filter"`: Drops low-confidence segments from downstream history and committed transcripts.
+     - `"ignore"`: Permits low-confidence segments without metadata modification.
+   - `SegmentAccumulator` tracks `low_confidence_segments` and exposes them via snapshots and property queries.
+4. **Automated Unit & Integration Tests**:
+   - `tests/test_session_and_revisions.py`: 14 comprehensive tests covering session enforcement, revision tracking, finalization metadata, confidence tag/filter policies, and orchestrator end-to-end workflows.
+
+---
+
+### 📅 Day 17–18: In-Flight Cancellation & Automatic Mock Provider Fallback (Week 3 Milestone)
+1. **In-Flight Cancellation (`orchestrator.cancel()`)**:
+   - Clean lifecycle transition to `CANCELLED` state without deadlocks or unhandled exceptions.
+   - Discards pending unread audio chunks from the ingestion queue immediately.
+   - Cancels background audio workers and stops provider adapters gracefully.
+   - Pushes stream sentinels to consumer queues, allowing `async for event in orch.stream():` loops to conclude cleanly.
+   - Safe and idempotent: calling `cancel()` multiple times leaves state intact.
+2. **Automatic Mock Provider Fallback (`FakeTranscriber`)**:
+   - Seamless dynamic failover when primary STT providers hit quota limits (HTTP 429 / quota exhaustion) or network failures (connection drops, timeouts, socket resets).
+   - Normalizes the underlying failure through `ErrorNormalizer` so raw vendor exceptions never leak upstream.
+   - Emits a normalized `TranscriptEvent(ERROR)` downstream flagging the fallback event (`fallback_triggered=True`).
+   - Automatically switches adapter to `FakeTranscriber` and replays the failed chunk, allowing the session to continue uninterrupted.
+   - Telemetry tracks `fallbacks_triggered` and `is_fallback_active`.
+   - Also integrated into `ResilientTranscriberWrapper` for component-level protection.
+3. **Automated Unit & Chaos Tests**:
+   - `tests/test_cancellation_and_fallback.py`: 11 tests covering in-flight cancellation, queue draining, subscriber exit, quota 429 fallback, network drop fallback, timeout fallback, disabled-fallback error escalation, and wrapper fallback.
+
+---
+
+### 📅 Day 19–20: W1 Audio Events & W5 Backend Event Stream Integration (Week 3 Milestone)
+1. **W1 Audio Event Models & Lifecycle (`src/voice/event_stream.py`)**:
+   - `AudioEvent` canonical data model carrying `session_id`, 0-based `chunk_index`, PCM audio payload, timestamps, sample rates, and terminal chunk indicators.
+   - Lifecycle factory constructors (`started()`, `chunk()`, `ended()`) guaranteeing compatibility with upstream Week 1 audio capture.
+   - Integrated into `TranscriptionOrchestrator.push_audio_event()` with auto-start and session isolation.
+2. **AudioStreamReorderer (Out-of-Order & Missing Chunk Resilience)**:
+   - Sliding-window sequencing buffer that re-sequences out-of-order audio packets chronologically before transcription.
+   - Detects sequence gaps caused by dropped/delayed packets.
+   - Generates zero-padded synthetic silence packets (`synthetic_fill=True`) to maintain STT audio timeline continuity without stalling.
+   - Suppresses stale late-arriving packets whose gap has already been advanced.
+   - Flushes remaining buffered audio in sequence upon utterance conclusion (`AUDIO_ENDED`).
+3. **W5 Backend Event Stream (`BackendEventStream`)**:
+   - High-throughput asynchronous pub/sub event distribution bus bridging the orchestrator to downstream W5 consumers (dialog manager, reasoning agent, workflow policy, UI gateways).
+   - Asynchronous streaming consumer (`async for event in stream.consume():`) with optional event type filtering and history replay.
+   - Synchronous and asynchronous callback listeners (`add_consumer()`).
+   - Integrated lifecycle: closing or cancelling the orchestrator automatically and cleanly concludes connected backend streams.
+4. **Automated Unit & End-to-End Integration Tests**:
+   - `tests/test_event_stream_integration.py`: 21 comprehensive tests covering AudioEvent models, reorderer resolution, missing chunk gap fill, stale suppression, backend pub/sub multiplexing, session enforcement, cancellation propagation, and mock fallback.
+
+---
+
+### 📅 Day 21: Integration Evidence, Pull Request & End-to-End Demo (Week 3 Culmination)
+1. **Week 3 End-to-End Integration Demo (`scripts/week3_integration_demo.py`)**:
+   - 5-stage interactive demonstration exercising all Week 3 requirements:
+     - **Stage 1 (W1 Audio Ingestion & Resilient Reordering)**: Out-of-order chunk sorting and missing packet gap detection with synthetic silence filling.
+     - **Stage 2 (Session-Aware Transcription & Hypothesis Revisions)**: Strict session association (`session_id`), progressive interim revisions (`revision=1, 2...`), confidence threshold tagging (`confidence_threshold=0.80`), and finalization.
+     - **Stage 3 (W5 Backend Event Stream & Pub/Sub Multiplexing)**: Real-time broadcast to `BackendEventStream` with concurrent downstream consumers (Dialog Manager, Reasoning Agent, UI WebSocket).
+     - **Stage 4 (In-Flight Cancellation / Barge-In)**: Clean cancellation on user barge-in without hanging or memory leaks.
+     - **Stage 5 (Quota / Network Failure & Automatic Mock Fallback)**: Demonstrates quota exhaustion (HTTP 429) automatically falling back to `FakeTranscriber` with zero leaked raw exceptions.
+   - Unified top-level launcher support via `python demo.py [--week3] [--fast]`.
+2. **Integration Evidence & Team Gate Documentation (`docs/week3_integration_evidence.md`)**:
+   - Comprehensive evidence matrix confirming all Day 21 acceptance criteria and pipeline contracts.
+   - Architectural flowcharts, telemetry breakdowns, and PR submission details.
+3. **Automated Unit & Integration Tests**:
+   - `tests/test_week3_integration.py`: 7 tests covering stage execution, JSON evidence snapshots, and team gate invariants.
+   - **Complete Test Suite**: **221 passing unit tests** across 14 test modules (100% offline, 0 external API keys required).
+
+---
+
+## 🎬 Running the Demos
+
+### Week 3 End-to-End Integration Demo (Day 21):
 ```bash
-# Top-level quick launcher (all scenarios)
+# Top-level quick launcher (all 5 stages)
 python demo.py
 
-# Or via scripts path
-python scripts/chunk_to_transcript_demo.py
-
-# Run single turn with custom text and visual pacing
-python demo.py --mode single --script "What is quicksort?" --pace 0.03
-
-# Run with natural 1.0x real-time speech pacing
-python demo.py --mode single --realtime
-
-# Instant execution (benchmarking)
+# Instant benchmark execution
 python demo.py --fast
 
-# Export final transcript snapshot to JSON
-python demo.py --export-json snapshot.json
+# Export final snapshot to JSON
+python demo.py --fast --export-json week3_snapshot.json
+```
+
+### Week 2 Synthetic Fixture Demo (Day 14):
+```bash
+python demo.py --week2
+```
+
+### Week 1 Chunk-to-Transcript Streaming Demo (Day 7):
+```bash
+python demo.py --week1
+python demo.py --week1 --mode single --script "What is quicksort?" --pace 0.03
 ```
 
 ---
 
 ## 🧪 Running the Tests
 
-To run the complete automated test suite (94 tests):
+To run the complete automated test suite (221 tests):
 ```bash
 python -m pytest -v
 ```

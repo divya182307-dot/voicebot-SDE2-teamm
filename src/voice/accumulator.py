@@ -54,6 +54,16 @@ class AccumulatorConfig(BaseModel):
         default=False,
         description="Whether to keep active interim hypothesis when SPEECH_ENDED arrives",
     )
+    confidence_threshold: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Minimum confidence threshold [0.0, 1.0] for segments",
+    )
+    filter_low_confidence: bool = Field(
+        default=False,
+        description="Whether to exclude final segments below confidence_threshold from committed text",
+    )
 
 
 class AccumulatedTranscript(BaseModel):
@@ -84,6 +94,8 @@ class AccumulatedTranscript(BaseModel):
     word_count: int = Field(default=0, ge=0, description="Count of words in finalized transcript")
     speech_active: bool = Field(default=False, description="Whether speech turn is active")
     errors: List[TranscriptError] = Field(default_factory=list, description="Encountered errors")
+    low_confidence_count: int = Field(default=0, ge=0, description="Count of low-confidence segments observed")
+    revisions_count: int = Field(default=0, ge=0, description="Count of interim hypothesis revisions")
 
 
 class SegmentAccumulator:
@@ -120,6 +132,9 @@ class SegmentAccumulator:
         self._active_interim: Optional[TranscriptSegment] = None
         self._speech_active: bool = False
         self._errors: List[TranscriptError] = []
+        self._low_confidence_segments: List[TranscriptSegment] = []
+        self._current_interim_revision: int = 0
+        self._total_revisions: int = 0
 
     # --------------------------------------------------------------------------
     # Properties
@@ -154,6 +169,21 @@ class SegmentAccumulator:
     def errors(self) -> List[TranscriptError]:
         """Return list of any recorded error diagnostics."""
         return list(self._errors)
+
+    @property
+    def low_confidence_segments(self) -> List[TranscriptSegment]:
+        """Return list of segments observed with confidence below configured threshold."""
+        return list(self._low_confidence_segments)
+
+    @property
+    def current_interim_revision(self) -> int:
+        """Return revision index of current active interim hypothesis."""
+        return self._current_interim_revision
+
+    @property
+    def total_revisions(self) -> int:
+        """Return total count of interim revisions processed."""
+        return self._total_revisions
 
     @property
     def is_empty(self) -> bool:
@@ -229,15 +259,24 @@ class SegmentAccumulator:
         elif event.event_type == TranscriptEventType.INTERIM_TRANSCRIPT:
             if event.segment is None:
                 raise InvalidEventError("INTERIM_TRANSCRIPT event missing required segment payload.")
+            if self._config.confidence_threshold > 0.0 and event.segment.confidence < self._config.confidence_threshold:
+                self._low_confidence_segments.append(event.segment)
             self._handle_interim_segment(event.segment)
 
         elif event.event_type == TranscriptEventType.FINAL_TRANSCRIPT:
             if event.segment is None:
                 raise InvalidEventError("FINAL_TRANSCRIPT event missing required segment payload.")
+            if self._config.confidence_threshold > 0.0 and event.segment.confidence < self._config.confidence_threshold:
+                self._low_confidence_segments.append(event.segment)
+                if self._config.filter_low_confidence:
+                    self._active_interim = None
+                    self._current_interim_revision = 0
+                    return
             self._handle_final_segment(event.segment)
 
         elif event.event_type == TranscriptEventType.SPEECH_ENDED:
             self._speech_active = False
+            self._current_interim_revision = 0
             if not self._config.preserve_interim_on_speech_ended:
                 self._active_interim = None
 
@@ -277,6 +316,8 @@ class SegmentAccumulator:
         """Update active interim hypothesis."""
         if segment.is_final:
             raise InvalidEventError("Cannot treat segment with is_final=True as interim hypothesis.")
+        self._current_interim_revision += 1
+        self._total_revisions += 1
         self._active_interim = segment
 
     def _handle_final_segment(self, segment: TranscriptSegment) -> None:
@@ -295,8 +336,9 @@ class SegmentAccumulator:
 
         self._final_segment_ids.add(segment.id)
 
-        # Clear active interim if it corresponds to or was superseded by this final segment
+        # Clear active interim and reset revision counter
         self._active_interim = None
+        self._current_interim_revision = 0
 
         if not self._config.auto_sort:
             self._final_segments.append(segment)
@@ -347,6 +389,8 @@ class SegmentAccumulator:
             word_count=self.word_count,
             speech_active=self._speech_active,
             errors=self.errors,
+            low_confidence_count=len(self._low_confidence_segments),
+            revisions_count=self._total_revisions,
         )
 
     def reset(self) -> None:
@@ -356,3 +400,6 @@ class SegmentAccumulator:
         self._active_interim = None
         self._speech_active = False
         self._errors.clear()
+        self._low_confidence_segments.clear()
+        self._current_interim_revision = 0
+        self._total_revisions = 0

@@ -90,6 +90,20 @@ class ReconciliationConfig(BaseModel):
         default=True,
         description="Validate and enforce matching session IDs across all ingested events",
     )
+    confidence_threshold: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Minimum confidence threshold [0.0, 1.0] for transcript segments",
+    )
+    low_confidence_action: str = Field(
+        default="tag",
+        description="Policy for handling low-confidence segments: 'tag' (adds metadata flag), 'filter' (drops segment), or 'ignore'",
+    )
+    track_revisions: bool = Field(
+        default=True,
+        description="Whether to track revision sequence numbers and finalization flags on events",
+    )
 
 
 class ReconciliationMetrics(BaseModel):
@@ -107,6 +121,10 @@ class ReconciliationMetrics(BaseModel):
     out_of_order_resolved: int = Field(default=0, ge=0, description="Out-of-order final segments reordered")
     finals_committed: int = Field(default=0, ge=0, description="Count of final segments locked into transcript")
     interims_promoted: int = Field(default=0, ge=0, description="Interims promoted to final on speech conclusion")
+    interim_revisions_count: int = Field(default=0, ge=0, description="Count of interim hypothesis revisions processed")
+    finalizations_count: int = Field(default=0, ge=0, description="Count of finalizations processed")
+    low_confidence_tagged_count: int = Field(default=0, ge=0, description="Count of segments flagged as low confidence")
+    low_confidence_suppressed_count: int = Field(default=0, ge=0, description="Count of low-confidence segments dropped")
 
 
 class TranscriptReconciler:
@@ -153,6 +171,9 @@ class TranscriptReconciler:
         # Tracking seen event IDs
         self._seen_event_ids: Set[str] = set()
 
+        # Interim hypothesis revision tracking
+        self._current_interim_revision: int = 0
+
         # Telemetry metrics
         self._metrics: ReconciliationMetrics = ReconciliationMetrics()
 
@@ -191,6 +212,11 @@ class TranscriptReconciler:
         if not self._final_segments:
             return 0
         return max(s.end_time_ms for s in self._final_segments)
+
+    @property
+    def current_interim_revision(self) -> int:
+        """Return the current interim revision count for the active utterance."""
+        return self._current_interim_revision
 
     # --------------------------------------------------------------------------
     # Reconciliation Pipeline
@@ -233,15 +259,48 @@ class TranscriptReconciler:
                 return None
             self._seen_event_ids.add(event.event_id)
 
-        # 2. Dispatch based on event type
+        # 2. Check confidence threshold for segments (Days 15-16)
+        if event.segment is not None and self._config.confidence_threshold > 0.0:
+            if event.segment.confidence < self._config.confidence_threshold:
+                if self._config.low_confidence_action == "filter":
+                    self._metrics.low_confidence_suppressed_count += 1
+                    logger.debug(
+                        "Filtered low-confidence segment '%s' (conf: %.2f < threshold: %.2f)",
+                        event.segment.id,
+                        event.segment.confidence,
+                        self._config.confidence_threshold,
+                    )
+                    return None
+                elif self._config.low_confidence_action == "tag":
+                    self._metrics.low_confidence_tagged_count += 1
+                    meta = dict(event.metadata or {})
+                    meta["is_low_confidence"] = True
+                    meta["confidence"] = event.segment.confidence
+                    meta["confidence_threshold"] = self._config.confidence_threshold
+                    event = event.model_copy(update={"metadata": meta})
+            elif self._config.low_confidence_action == "tag":
+                meta = dict(event.metadata or {})
+                meta["is_low_confidence"] = False
+                event = event.model_copy(update={"metadata": meta})
+
+        # 3. Dispatch based on event type
         if event.event_type == TranscriptEventType.FINAL_TRANSCRIPT:
             if event.segment is None:
                 raise InvalidEventError("FINAL_TRANSCRIPT event missing required segment payload.")
             reconciled_segment = self.reconcile_final_segment(event.segment)
             if reconciled_segment is None:
                 return None
-            # Return event with reconciled segment
-            return event.model_copy(update={"segment": reconciled_segment})
+
+            meta = dict(event.metadata or {})
+            if self._config.track_revisions:
+                meta["is_finalization"] = True
+                meta["finalization_index"] = len(self._final_segments)
+                meta["total_revisions_for_segment"] = self._current_interim_revision
+                self._current_interim_revision = 0
+                self._metrics.finalizations_count += 1
+
+            # Return event with reconciled segment and metadata
+            return event.model_copy(update={"segment": reconciled_segment, "metadata": meta if meta else event.metadata})
 
         elif event.event_type == TranscriptEventType.INTERIM_TRANSCRIPT:
             if event.segment is None:
@@ -249,7 +308,16 @@ class TranscriptReconciler:
             reconciled_segment = self.reconcile_interim_segment(event.segment)
             if reconciled_segment is None:
                 return None
-            return event.model_copy(update={"segment": reconciled_segment})
+
+            meta = dict(event.metadata or {})
+            if self._config.track_revisions:
+                self._current_interim_revision += 1
+                self._metrics.interim_revisions_count += 1
+                meta["revision"] = self._current_interim_revision
+                meta["is_revision"] = True
+                meta["revision_type"] = "interim_revision"
+
+            return event.model_copy(update={"segment": reconciled_segment, "metadata": meta if meta else event.metadata})
 
         elif event.event_type == TranscriptEventType.SPEECH_ENDED:
             return self._handle_speech_ended(event)
@@ -394,6 +462,7 @@ class TranscriptReconciler:
 
         self._active_interim = None
         self._last_emitted_interim_text = None
+        self._current_interim_revision = 0
         return event
 
     def _insert_sorted(self, segment: TranscriptSegment) -> None:

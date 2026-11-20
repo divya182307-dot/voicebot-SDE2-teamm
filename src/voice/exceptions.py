@@ -56,6 +56,12 @@ class TranscriberRateLimitError(TranscriberError):
     pass
 
 
+class TranscriberQuotaExceededError(TranscriberRateLimitError):
+    """Raised when an STT provider account quota is exhausted (e.g. monthly minutes or API units)."""
+
+    pass
+
+
 class TranscriberAuthenticationError(TranscriberError):
     """Raised when an STT provider rejects credentials, tokens, or permissions."""
 
