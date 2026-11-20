@@ -1,0 +1,111 @@
+{
+  "$defs": {
+    "WordTiming": {
+      "additionalProperties": false,
+      "description": "Word-level timing information for synchronized visual rendering and highlighting.\n\nFields:\n    word: The spoken word token.\n    start_time_ms: Start offset from audio onset in milliseconds (>= 0).\n    end_time_ms: End offset from audio onset in milliseconds (>= start_time_ms).\n    confidence: Word transcription confidence score [0.0, 1.0].",
+      "properties": {
+        "word": {
+          "description": "Transcribed word token",
+          "minLength": 1,
+          "title": "Word",
+          "type": "string"
+        },
+        "start_time_ms": {
+          "description": "Start offset in milliseconds from audio start",
+          "minimum": 0,
+          "title": "Start Time Ms",
+          "type": "integer"
+        },
+        "end_time_ms": {
+          "description": "End offset in milliseconds from audio start",
+          "minimum": 0,
+          "title": "End Time Ms",
+          "type": "integer"
+        },
+        "confidence": {
+          "description": "Confidence score between 0.0 and 1.0",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        }
+      },
+      "required": [
+        "word",
+        "start_time_ms",
+        "end_time_ms",
+        "confidence"
+      ],
+      "title": "WordTiming",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Specification of an utterance to be simulated by the fake transcriber.\n\nFields:\n    text: Final transcribed sentence or phrase.\n    duration_ms: Expected spoken duration of the utterance in milliseconds.\n    confidence: Normalized confidence score [0.0, 1.0].\n    language: BCP-47 / ISO language code.\n    words: Optional explicit word timings (computed deterministically if omitted).\n    interim_steps: Optional explicit progressive interim texts.",
+  "properties": {
+    "text": {
+      "description": "Transcribed utterance text",
+      "minLength": 1,
+      "title": "Text",
+      "type": "string"
+    },
+    "duration_ms": {
+      "default": 1200,
+      "description": "Spoken duration of this utterance in milliseconds",
+      "minimum": 100,
+      "title": "Duration Ms",
+      "type": "integer"
+    },
+    "confidence": {
+      "default": 0.98,
+      "description": "Confidence score for this utterance",
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Confidence",
+      "type": "number"
+    },
+    "language": {
+      "default": "en-US",
+      "description": "Language code for the utterance",
+      "title": "Language",
+      "type": "string"
+    },
+    "words": {
+      "anyOf": [
+        {
+          "items": {
+            "$ref": "#/$defs/WordTiming"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Optional custom word timings",
+      "title": "Words"
+    },
+    "interim_steps": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Optional custom interim text progression",
+      "title": "Interim Steps"
+    }
+  },
+  "required": [
+    "text"
+  ],
+  "title": "FakeUtterance",
+  "type": "object"
+}
