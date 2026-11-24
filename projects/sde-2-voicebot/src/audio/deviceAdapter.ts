@@ -67,28 +67,28 @@ export async function requestMicrophonePermission(
       switch (error.name) {
         case "NotAllowedError":
         case "PermissionDeniedError":
-          throw new Error("Microphone permission was denied.");
+          throw new Error("Microphone permission was denied.", { cause: error });
 
         case "NotFoundError":
         case "DevicesNotFoundError":
-          throw new Error("No microphone device was found.");
+          throw new Error("No microphone device was found.", { cause: error });
 
         case "NotReadableError":
         case "TrackStartError":
-          throw new Error("Microphone is being used by another application.");
+          throw new Error("Microphone is being used by another application.", { cause: error });
 
         case "OverconstrainedError":
-          throw new Error("The selected microphone is not available.");
+          throw new Error("The selected microphone is not available.", { cause: error });
 
         case "SecurityError":
-          throw new Error("Microphone access requires a secure connection.");
+          throw new Error("Microphone access requires a secure connection.", { cause: error });
 
         default:
-          throw new Error(`Microphone error: ${error.message}`);
+          throw new Error(`Microphone error: ${error.message}`, { cause: error });
       }
     }
 
-    throw new Error("An unexpected microphone error occurred.");
+    throw new Error("An unexpected microphone error occurred.", { cause: error });
   }
 }
 

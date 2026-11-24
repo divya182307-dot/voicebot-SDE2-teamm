@@ -164,6 +164,54 @@ describe('Academia AI Voice Co-Pilot', () => {
     ).toBeInTheDocument()
   })
 
+  it('should stop an active recording when the session stops', async () => {
+    render(<App />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start Session' }))
+    await screen.findByText('Session Status: active')
+    fireEvent.click(screen.getByRole('button', { name: 'Start Recording' }))
+    await screen.findByText('● Recording in progress')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Stop Session' }))
+
+    expect(await screen.findByText('Session Status: stopped')).toBeInTheDocument()
+    expect(screen.getByText('Recording stopped')).toBeInTheDocument()
+  })
+
+  it('should stop the session immediately while the event stream is disconnected', async () => {
+    render(<App />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start Session' }))
+    await screen.findByText('Session Status: active')
+    fireEvent.click(screen.getByRole('button', { name: 'Disconnect' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Stop Session' }))
+
+    expect(await screen.findByText('Session Status: stopped')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reconnect' }))
+
+    expect(await screen.findByText('Live Connection Status: connected')).toBeInTheDocument()
+    expect(screen.getByText('Session Status: stopped')).toBeInTheDocument()
+  })
+
+  it('should stop a microphone that finishes starting after the session is stopped', async () => {
+    let resolveStart!: () => void
+    audioMock.start.mockImplementation(
+      () => new Promise<void>((resolve) => {
+        resolveStart = resolve
+      })
+    )
+
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Start Session' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Start Recording' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Stop Session' }))
+    resolveStart()
+
+    expect(await screen.findByText('Session Status: stopped')).toBeInTheDocument()
+    expect(await screen.findByText('Recording stopped')).toBeInTheDocument()
+  })
+
   // -----------------------------------------
   // MENTOR FEEDBACK 1: PAUSE AND RESUME
   // -----------------------------------------
@@ -358,6 +406,130 @@ describe('Academia AI Voice Co-Pilot', () => {
         'Screen context is enabled. You can start screen sharing below when you are ready.'
       )
     ).not.toBeInTheDocument()
+  })
+
+  it('should display live backend and workflow sections', () => {
+    render(<App />)
+
+    expect(screen.getByRole('heading', { name: 'Live Backend Connection' })).toBeInTheDocument()
+    expect(screen.getByText('Live Connection Status: connected')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Workflow Progress' })).toBeInTheDocument()
+    expect(screen.getByText('Capture audio')).toBeInTheDocument()
+  })
+
+  it('should disconnect and reconnect the live backend', async () => {
+    render(<App />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Disconnect' }))
+    expect(await screen.findByText('The live backend is disconnected.')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reconnect' }))
+    expect(await screen.findByText('Live Connection Status: connected')).toBeInTheDocument()
+  })
+
+  it('should replay workflow events missed during a disconnect', async () => {
+    render(<App />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Disconnect' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Start Session' }))
+
+    expect(screen.getByText('Session Status: stopped')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reconnect' }))
+
+    expect(await screen.findByText('Session Status: active')).toBeInTheDocument()
+    expect(await screen.findByText('Replayed 2 missed events.')).toBeInTheDocument()
+    expect(screen.getByText('Capture audio').nextSibling).toHaveTextContent('active')
+  })
+
+  it('should advance workflow from events published to the live stream', async () => {
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Start Session' }))
+
+    expect(screen.getByText('Capture audio').nextSibling).toHaveTextContent('active')
+    fireEvent.click(screen.getByRole('button', { name: 'Advance Workflow' }))
+
+    expect(screen.getByText('Capture audio').nextSibling).toHaveTextContent('complete')
+    expect(screen.getByText('Build transcript').nextSibling).toHaveTextContent('active')
+    expect(await screen.findByText('Actions executed: 0')).toBeInTheDocument()
+  })
+
+  it('should explain approval risk and reject without starting execution', () => {
+    render(<App />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start Session' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Advance Workflow' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Advance Workflow' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Advance Workflow' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Open Approval Dialog' }))
+
+    expect(screen.getByRole('dialog', { name: 'Approve or Reject Action' })).toBeInTheDocument()
+    expect(screen.getByText(/Rejecting records the decision and prevents execution/)).toBeInTheDocument()
+    expect(screen.getByText(/Screen context is disabled and will not be used/)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reject' }))
+
+    expect(screen.getByText(/Approval Decision: Rejected/)).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getByText('Actions executed: 0')).toBeInTheDocument()
+    expect(screen.getByText('Approval review').nextSibling).toHaveTextContent('rejected')
+  })
+
+  it('should execute only after explicit approval', () => {
+    render(<App />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start Session' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Advance Workflow' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Advance Workflow' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Advance Workflow' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Open Approval Dialog' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
+
+    expect(screen.getByText('Actions executed: 1')).toBeInTheDocument()
+    expect(screen.getByText('Approval Decision: Approved')).toBeInTheDocument()
+  })
+
+  it('should keep keyboard focus inside the approval dialog and allow Escape dismissal', () => {
+    render(<App />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start Session' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Advance Workflow' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Advance Workflow' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Advance Workflow' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Open Approval Dialog' }))
+
+    const approveButton = screen.getByRole('button', { name: 'Approve' })
+    const rejectButton = screen.getByRole('button', { name: 'Reject' })
+    expect(approveButton).toHaveFocus()
+
+    fireEvent.keyDown(document, { key: 'Tab', shiftKey: true })
+    expect(rejectButton).toHaveFocus()
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getByText('Actions executed: 0')).toBeInTheDocument()
+  })
+
+  it('should snapshot enabled screen context into the approval risk explanation', () => {
+    render(<App />)
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Enable Screen Context' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Start Session' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Advance Workflow' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Advance Workflow' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Advance Workflow' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Open Approval Dialog' }))
+
+    expect(screen.getByText(/and screen context you explicitly shared/)).toBeInTheDocument()
+    expect(screen.getByRole('dialog')).toHaveTextContent('Screen context for this action: ON')
+  })
+
+  it('should keep screen context off in privacy settings by default', () => {
+    render(<App />)
+
+    expect(screen.getByRole('checkbox', { name: 'Enable Screen Context' })).not.toBeChecked()
+    expect(screen.getByText('Screen context is OFF.')).toBeInTheDocument()
+    expect(screen.getAllByRole('checkbox', { name: 'Enable Screen Context' })).toHaveLength(1)
   })
 
   it('should enable Screen Context only after the user turns it ON', () => {

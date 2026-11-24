@@ -6,8 +6,13 @@ import {
   AudioLifecycle,
   type AudioStatus,
 } from "./audio/audioLifecycle";
-import type { TranscriptMessage } from "./types/session";
+import type {
+  LiveConnectionStatus,
+  TranscriptMessage,
+  WorkflowStep,
+} from "./types/session";
 import { mockTranscript } from "./fixtures/transcript";
+import { MockLiveBackend } from "./api/liveBackend";
 import "./App.css";
 
 function App() {
@@ -26,6 +31,29 @@ function App() {
   // Internet connection status.
   const [isOnline, setIsOnline] = useState(navigator.onLine);
 
+  const [liveConnectionStatus, setLiveConnectionStatus] =
+    useState<LiveConnectionStatus>("connected");
+  const [workflowSteps, setWorkflowSteps] = useState<WorkflowStep[]>([
+    { id: "audio", label: "Capture audio", status: "pending" },
+    { id: "transcript", label: "Build transcript", status: "pending" },
+    { id: "reasoning", label: "Generate assistant response", status: "pending" },
+    { id: "approval", label: "Approval review", status: "pending" },
+  ]);
+  const [isApprovalOpen, setIsApprovalOpen] = useState(false);
+  const [approvalDecision, setApprovalDecision] = useState("");
+  const [approvalScreenContextEnabled, setApprovalScreenContextEnabled] =
+    useState(false);
+  const [executionCount, setExecutionCount] = useState(0);
+  const [replayedEventCount, setReplayedEventCount] = useState(0);
+  const [lastEventId, setLastEventId] = useState(0);
+  const [sessionId, setSessionId] = useState("");
+  const [messages, setMessages] = useState<TranscriptMessage[]>([
+    mockTranscript[0],
+    mockTranscript[1],
+    mockTranscript[2],
+    mockTranscript[4],
+  ]);
+
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
     const handleOffline = () => setIsOnline(false);
@@ -39,37 +67,177 @@ function App() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!isApprovalOpen) {
+      return;
+    }
+
+    const dialog = approvalDialogRef.current;
+    const previousFocus = document.activeElement as HTMLElement | null;
+    const focusableElements = () =>
+      dialog?.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      );
+
+    focusableElements()?.[0]?.focus();
+
+    const handleDialogKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsApprovalOpen(false);
+        return;
+      }
+
+      if (event.key !== "Tab") {
+        return;
+      }
+
+      const focusable = focusableElements();
+      if (!focusable?.length) {
+        return;
+      }
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener("keydown", handleDialogKeyDown);
+
+    return () => {
+      document.removeEventListener("keydown", handleDialogKeyDown);
+      if (previousFocus?.isConnected) {
+        previousFocus.focus();
+      }
+    };
+  }, [isApprovalOpen]);
+
   const audioLifecycle = useRef<AudioLifecycle | null>(null);
+  const liveBackend = useRef<MockLiveBackend | null>(null);
+  const reconnectTimer = useRef<number | null>(null);
+  const recordingStartVersion = useRef(0);
+  const approvalDialogRef = useRef<HTMLElement | null>(null);
+
+  if (liveBackend.current === null) {
+    liveBackend.current = new MockLiveBackend();
+  }
+
+  useEffect(() => {
+    const backend = liveBackend.current!;
+    backend.connect();
+
+    const unsubscribe = backend.subscribe((event, delivery) => {
+      if (event.type === "session") {
+        setIsSessionActive(event.payload.status === "active");
+        setSessionId(event.payload.sessionId);
+      }
+
+      setLastEventId(event.id);
+
+      if (event.type === "workflow") {
+        setWorkflowSteps(event.payload);
+      } else if (event.type === "transcript") {
+        setMessages((previousMessages) =>
+          previousMessages.some((message) => message.id === event.payload.id)
+            ? previousMessages
+            : [...previousMessages, event.payload]
+        );
+      } else if (event.type === "approval") {
+        setApprovalScreenContextEnabled(event.payload.screenContextEnabled);
+        setIsApprovalOpen(true);
+      } else if (event.type === "approval-decision") {
+        setApprovalDecision(
+          event.payload.decision === "approved"
+            ? "Approved"
+            : "Rejected: execution was not started"
+        );
+        setIsApprovalOpen(false);
+      } else if (event.type === "execution") {
+        setExecutionCount((count) => count + 1);
+      }
+
+      if (delivery.replayed) {
+        setReplayedEventCount((count) => count + 1);
+      }
+    });
+
+    return () => {
+      if (reconnectTimer.current !== null) {
+        window.clearTimeout(reconnectTimer.current);
+      }
+      unsubscribe();
+      backend.disconnect();
+    };
+  }, []);
 
   if (audioLifecycle.current === null) {
     audioLifecycle.current = new AudioLifecycle();
   }
 
-  const [messages, setMessages] = useState<TranscriptMessage[]>([
-    mockTranscript[0],
-    mockTranscript[1],
-    mockTranscript[2],
-    mockTranscript[4],
-  ]);
-
-  // Start session.
-  const handleStart = () => {
-    setIsSessionActive(true);
+  const publishWorkflow = (steps: WorkflowStep[]) => {
+    liveBackend.current?.publish({ type: "workflow", payload: steps });
   };
 
-  // Stop session.
+  // Start session through the mock session/event stream.
+  const handleStart = () => {
+    liveBackend.current?.publish({
+      type: "session",
+      payload: { sessionId: "mock-session-001", status: "active" },
+    });
+    publishWorkflow([
+      { id: "audio", label: "Capture audio", status: "active" },
+      { id: "transcript", label: "Build transcript", status: "pending" },
+      { id: "reasoning", label: "Generate assistant response", status: "pending" },
+      { id: "approval", label: "Approval review", status: "pending" },
+    ]);
+  };
+
+  // Stop recording and session through the mock session/event stream.
   const handleStop = () => {
+    recordingStartVersion.current += 1;
+
+    if (recordingStatus === "recording" || recordingStatus === "paused") {
+      audioLifecycle.current!.stop();
+      setRecordingStatus("stopped");
+    }
+
     setIsSessionActive(false);
+    liveBackend.current?.publish({
+      type: "session",
+      payload: { sessionId: "mock-session-001", status: "stopped" },
+    });
   };
 
   // Start recording.
   const handleStartRecording = async () => {
+    const startVersion = recordingStartVersion.current;
     setIsLoading(true);
     setErrorMessage("");
 
     try {
       await audioLifecycle.current!.start();
+
+      if (startVersion !== recordingStartVersion.current) {
+        audioLifecycle.current!.stop();
+        setRecordingStatus("stopped");
+        return;
+      }
+
       setRecordingStatus("recording");
+      const currentSteps = workflowSteps;
+      if (isSessionActive && currentSteps[0]?.status === "active") {
+        publishWorkflow([
+          { ...currentSteps[0], status: "complete" },
+          { ...currentSteps[1], status: "active" },
+          ...currentSteps.slice(2),
+        ]);
+      }
     } catch (error) {
       setErrorMessage(
         error instanceof Error
@@ -91,6 +259,100 @@ function App() {
   const handleResumeRecording = () => {
     audioLifecycle.current!.resume();
     setRecordingStatus(audioLifecycle.current!.status);
+  };
+
+  const handleDisconnectLiveBackend = () => {
+    liveBackend.current!.disconnect();
+    setLiveConnectionStatus("disconnected");
+  };
+
+  const handleReconnectLiveBackend = () => {
+    setLiveConnectionStatus("reconnecting");
+
+    reconnectTimer.current = window.setTimeout(() => {
+      const replayed = liveBackend.current!.reconnect();
+      setReplayedEventCount(replayed);
+      setLiveConnectionStatus("connected");
+      reconnectTimer.current = null;
+    }, 300);
+  };
+
+  const handleAdvanceWorkflow = () => {
+    const activeIndex = workflowSteps.findIndex(
+      (step) => step.status === "active"
+    );
+
+    if (
+      activeIndex === -1 ||
+      workflowSteps[activeIndex]?.id === "approval"
+    ) {
+      return;
+    }
+
+    const updatedSteps = workflowSteps.map((step, index) => {
+      if (index < activeIndex) {
+        return { ...step, status: "complete" as const };
+      }
+
+      if (index === activeIndex) {
+        return { ...step, status: "complete" as const };
+      }
+
+      if (index === activeIndex + 1) {
+        return { ...step, status: "active" as const };
+      }
+
+      return step;
+    });
+
+    publishWorkflow(updatedSteps);
+  };
+
+  const handleOpenApproval = () => {
+    if (!workflowSteps.some((step) => step.id === "approval" && step.status === "active")) {
+      return;
+    }
+
+    setApprovalDecision("");
+    liveBackend.current?.publish({
+      type: "approval",
+      payload: {
+        message: "The assistant is requesting permission to execute this action.",
+        screenContextEnabled: isScreenContextEnabled,
+      },
+    });
+  };
+
+  const handleApprove = () => {
+    liveBackend.current?.publish({
+      type: "execution",
+      payload: { message: "Approved action execution started." },
+    });
+    liveBackend.current?.publish({
+      type: "approval-decision",
+      payload: { decision: "approved" },
+    });
+    publishWorkflow(
+      workflowSteps.map((step) =>
+        step.status === "pending" || step.status === "active"
+          ? { ...step, status: "complete" as const }
+          : step
+      )
+    );
+  };
+
+  const handleReject = () => {
+    liveBackend.current?.publish({
+      type: "approval-decision",
+      payload: { decision: "rejected" },
+    });
+    publishWorkflow(
+      workflowSteps.map((step) =>
+        step.status === "active" || step.status === "pending"
+          ? { ...step, status: "rejected" as const }
+          : step
+      )
+    );
   };
 
   // Stop recording.
@@ -115,10 +377,10 @@ function App() {
       isRevised: false,
     };
 
-    setMessages((previousMessages) => [
-      ...previousMessages,
-      newMessage,
-    ]);
+    liveBackend.current?.publish({
+      type: "transcript",
+      payload: newMessage,
+    });
   };
 
   // Finalize interim transcript.
@@ -165,10 +427,10 @@ function App() {
 
         {/* Mock mode */}
         <div className="mock-banner">
-          <strong>Mock Mode Active</strong>
+          <strong>Mock Backend Session and Event Stream Active</strong>
           <p>
-            This application currently uses mock data for development
-            and testing.
+            Session, workflow, approval, and transcript changes use the
+            typed mock event stream.
           </p>
         </div>
 
@@ -180,6 +442,7 @@ function App() {
             Session Status:{" "}
             {isSessionActive ? "active" : "stopped"}
           </p>
+          {sessionId && <p>Session ID: {sessionId}</p>}
 
           <div className="session-buttons">
             <button
@@ -278,6 +541,89 @@ function App() {
           )}
         </section>
 
+        {/* Live backend connection */}
+        <section className="live-section">
+          <h2>Live Backend Connection</h2>
+          <p>
+            <span>{`Live Connection Status: ${liveConnectionStatus}`}</span>
+          </p>
+          <p>Last event received: {lastEventId || "none"}</p>
+
+          {liveConnectionStatus === "reconnecting" && (
+            <p role="status">Reconnecting and replaying missed events...</p>
+          )}
+
+          {liveConnectionStatus === "disconnected" && (
+            <p role="status">The live backend is disconnected.</p>
+          )}
+
+          {replayedEventCount > 0 && liveConnectionStatus === "connected" && (
+            <p role="status">
+              Replayed {replayedEventCount} missed event{replayedEventCount === 1 ? "" : "s"}.
+            </p>
+          )}
+
+          <div className="session-buttons">
+            <button
+              type="button"
+              onClick={handleReconnectLiveBackend}
+              disabled={liveConnectionStatus === "connected"}
+            >
+              Reconnect
+            </button>
+            <button
+              type="button"
+              onClick={handleDisconnectLiveBackend}
+              disabled={liveConnectionStatus !== "connected"}
+            >
+              Disconnect
+            </button>
+          </div>
+        </section>
+
+        {/* Workflow progress */}
+        <section className="workflow-section">
+          <h2>Workflow Progress</h2>
+          <ol className="workflow-list" aria-live="polite">
+            {workflowSteps.map((step) => (
+              <li key={step.id}>
+                <span>{step.label}</span>
+                <strong className={`workflow-status ${step.status}`}>
+                  {step.status}
+                </strong>
+              </li>
+            ))}
+          </ol>
+          {approvalDecision && (
+            <p role="status">Approval Decision: {approvalDecision}</p>
+          )}
+          <div className="session-buttons">
+            <button
+              type="button"
+              onClick={handleAdvanceWorkflow}
+              disabled={
+                !workflowSteps.some(
+                  (step) => step.status === "active" && step.id !== "approval"
+                )
+              }
+            >
+              Advance Workflow
+            </button>
+            <button
+              type="button"
+              onClick={handleOpenApproval}
+              disabled={
+                !workflowSteps.some(
+                  (step) => step.id === "approval" && step.status === "active"
+                ) || isApprovalOpen
+              }
+            >
+              Open Approval Dialog
+            </button>
+          </div>
+          <p role="status">Actions executed: {executionCount}</p>
+        </section>
+
         {/* Microphone selection */}
         <MicrophoneSelector />
 
@@ -289,21 +635,6 @@ function App() {
             Manage screen context and view the information sources
             used by the voice assistant.
           </p>
-
-          <div className="context-toggle">
-            <label htmlFor="screen-context">
-              Enable Screen Context
-            </label>
-
-            <input
-              id="screen-context"
-              type="checkbox"
-              checked={isScreenContextEnabled}
-              onChange={(event) =>
-                setIsScreenContextEnabled(event.target.checked)
-              }
-            />
-          </div>
 
           <p
             className={
@@ -354,6 +685,26 @@ function App() {
                 : "Screen context disabled"}
             </p>
           </div>
+        </section>
+
+        {/* Privacy settings */}
+        <section className="privacy-section">
+          <h2>Privacy Settings</h2>
+          <p>
+            <span>{`Screen context is ${isScreenContextEnabled ? "ON" : "OFF"}.`}</span>
+            {" "}Screen content is only considered when enabled and explicitly shared.
+          </p>
+          <label htmlFor="screen-context">
+            <input
+              id="screen-context"
+              type="checkbox"
+              checked={isScreenContextEnabled}
+              onChange={(event) =>
+                setIsScreenContextEnabled(event.target.checked)
+              }
+            />
+            Enable Screen Context
+          </label>
         </section>
 
         {/* Transcript timeline */}
@@ -416,6 +767,45 @@ function App() {
             Add Transcript Message
           </button>
         </section>
+
+        {isApprovalOpen && (
+          <div
+            className="approval-overlay"
+            role="presentation"
+          >
+            <section
+              className="approval-dialog"
+              ref={approvalDialogRef}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="approval-title"
+            >
+              <h2 id="approval-title">Approve or Reject Action</h2>
+              <p>
+                Risk: Approving starts the pending workflow action using the
+                transcript{approvalScreenContextEnabled
+                  ? " and screen context you explicitly shared."
+                  : ". Screen context is disabled and will not be used."}
+              </p>
+              <p>
+                Rejecting records the decision and prevents execution.
+              </p>
+              <p>
+                Screen context for this action:{" "}
+                <strong>{approvalScreenContextEnabled ? "ON" : "OFF"}</strong>
+              </p>
+
+              <div className="session-buttons">
+                <button type="button" onClick={handleApprove}>
+                  Approve
+                </button>
+                <button type="button" onClick={handleReject}>
+                  Reject
+                </button>
+              </div>
+            </section>
+          </div>
+        )}
 
       </main>
 

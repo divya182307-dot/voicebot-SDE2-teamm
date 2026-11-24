@@ -172,6 +172,75 @@ button:disabled {
   margin-bottom: 8px;
 }
 
+.live-section,
+.workflow-section,
+.privacy-section {
+  background: white;
+  padding: 25px;
+  margin-bottom: 25px;
+  border-radius: 12px;
+  box-shadow: 0 3px 15px rgba(0, 0, 0, 0.07);
+}
+
+.workflow-list {
+  list-style: none;
+  margin-bottom: 15px;
+}
+
+.workflow-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 12px;
+  border-bottom: 1px solid #e6e8ef;
+}
+
+.workflow-status {
+  text-transform: capitalize;
+}
+
+.workflow-status.complete {
+  color: #176b39;
+}
+
+.workflow-status.active {
+  color: #8a5a00;
+}
+
+.workflow-status.rejected {
+  color: #b00020;
+}
+
+.privacy-section label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: bold;
+}
+
+.privacy-section input {
+  width: 18px;
+  height: 18px;
+}
+
+.approval-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  background: rgba(37, 43, 69, 0.55);
+  padding: 20px;
+}
+
+.approval-dialog {
+  width: min(560px, 100%);
+  background: white;
+  border-radius: 12px;
+  padding: 25px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+}
+
 .app-footer {
   text-align: center;
   padding: 20px;
