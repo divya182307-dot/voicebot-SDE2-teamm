@@ -1,6 +1,6 @@
 __pycache__/
 *.py[cod]
-*$py.class
+*.class
 *.so
 .Python
 env/
@@ -31,7 +31,6 @@ htmlcov/
 *.swo
 .DS_Store
 *.log
-
 # Results screenshots
 results/*.jpg
 results/*.jpeg
