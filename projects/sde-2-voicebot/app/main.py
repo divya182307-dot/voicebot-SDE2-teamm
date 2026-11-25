@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Literal
 
 from pydantic import BaseModel
-from fastapi import FastAPI, Request, Header
+from fastapi import FastAPI, Request, Header, Query
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -65,7 +65,6 @@ idempotency_store = {}
 event_history = {}
 
 # Active SSE subscribers, grouped by session ID.
-# Each subscriber contains its event loop and asyncio queue.
 event_subscribers = {}
 
 idempotency_lock = Lock()
@@ -353,7 +352,13 @@ def get_session_events(session_id: str):
 @app.get("/sessions/{session_id}/events/stream")
 async def stream_session_events(
     session_id: str,
-    request: Request
+    request: Request,
+    max_events: int | None = Query(default=None, ge=1),
+    timeout: float | None = Query(
+        default=None,
+        gt=0,
+        le=300
+    )
 ):
     if session_repository.get(session_id) is None:
         raise StarletteHTTPException(status_code=404)
@@ -361,22 +366,38 @@ async def stream_session_events(
     loop = asyncio.get_running_loop()
     queue = asyncio.Queue()
 
-    # Take the history snapshot and register the subscriber
-    # under the same lock so no event is missed between them.
-    with idempotency_lock:
-        events = list(event_history.get(session_id, []))
+    # Use a bounded timeout when an event limit is requested.
+    effective_timeout = timeout
 
-        subscriber = (loop, queue)
-
-        event_subscribers.setdefault(
-            session_id,
-            set()
-        ).add(subscriber)
+    if max_events is not None and timeout is None:
+        effective_timeout = 5.0
 
     async def event_generator():
+        sent_events = 0
+        subscriber = (loop, queue)
+
+        deadline = (
+            loop.time() + effective_timeout
+            if effective_timeout is not None
+            else None
+        )
+
+        # Snapshot history and register subscriber atomically.
+        with idempotency_lock:
+            events = list(event_history.get(session_id, []))
+
+            event_subscribers.setdefault(
+                session_id,
+                set()
+            ).add(subscriber)
+
         try:
             # Send previously recorded events first.
             for event_record in events:
+
+                if deadline is not None and loop.time() >= deadline:
+                    return
+
                 event_data = json.dumps(event_record)
 
                 yield (
@@ -385,13 +406,30 @@ async def stream_session_events(
                     f"data: {event_data}\n\n"
                 )
 
+                sent_events += 1
+
+                # Close when the requested event limit is reached.
+                if max_events is not None and sent_events >= max_events:
+                    return
+
             # Continue waiting for newly created events.
             while not await request.is_disconnected():
+
+                wait_time = 15.0
+
+                # Respect the overall stream timeout.
+                if deadline is not None:
+                    remaining = deadline - loop.time()
+
+                    if remaining <= 0:
+                        return
+
+                    wait_time = min(wait_time, remaining)
 
                 try:
                     event_record = await asyncio.wait_for(
                         queue.get(),
-                        timeout=15
+                        timeout=wait_time
                     )
 
                     event_data = json.dumps(event_record)
@@ -402,12 +440,23 @@ async def stream_session_events(
                         f"data: {event_data}\n\n"
                     )
 
+                    sent_events += 1
+
+                    # Close when the event limit is reached.
+                    if max_events is not None and sent_events >= max_events:
+                        return
+
                 except asyncio.TimeoutError:
-                    # Keep the SSE connection alive.
+
+                    # Close the stream when its deadline is reached.
+                    if deadline is not None and loop.time() >= deadline:
+                        return
+
+                    # Keep normal SSE connections alive.
                     yield ": keep-alive\n\n"
 
         finally:
-            # Remove disconnected clients from the subscriber store.
+            # Remove disconnected or completed subscribers.
             with idempotency_lock:
                 subscribers = event_subscribers.get(session_id)
 

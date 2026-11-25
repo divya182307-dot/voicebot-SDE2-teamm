@@ -2,6 +2,7 @@
 import json
 import logging
 import threading
+import time
 from datetime import datetime, timezone, timedelta
 
 from fastapi.testclient import TestClient
@@ -11,6 +12,7 @@ from app.main import (
     idempotency_store,
     event_history,
     event_subscribers,
+    idempotency_lock,
     JSONFormatter,
 )
 from app.repository import session_repository
@@ -31,6 +33,9 @@ def create_session():
     response = client.post("/sessions")
     assert response.status_code == 200
     return response.json()["session"]["id"]
+
+
+# WEEK 1 TESTS
 
 
 def test_health():
@@ -246,63 +251,175 @@ def test_events_are_returned_in_order():
     ] == [1, 2, 3]
 
 
+# Corrected SSE test: historical events and bounded streaming.
 def test_event_stream_returns_server_sent_events():
     session_id = create_session()
 
-    # Record an event before connecting.
     first_response = client.post(
         f"/sessions/{session_id}/events",
         json={"event_type": "start"}
     )
     assert first_response.status_code == 200
 
+    second_response = client.post(
+        f"/sessions/{session_id}/events",
+        json={"event_type": "pause"}
+    )
+    assert second_response.status_code == 200
+
     with client.stream(
         "GET",
         f"/sessions/{session_id}/events/stream",
-        timeout=5
+        params={
+            "max_events": 2,
+            "timeout": 5
+        }
     ) as response:
 
         assert response.status_code == 200
+
         assert response.headers["content-type"].startswith(
             "text/event-stream"
         )
 
-        lines = response.iter_lines()
+        lines = list(response.iter_lines())
 
-        # Receive the previously recorded event.
-        received_start = False
+        event_lines = [
+            line for line in lines
+            if line.startswith("event: ")
+        ]
 
-        for line in lines:
-            if line == "event: start":
-                received_start = True
+        assert event_lines == [
+            "event: start",
+            "event: pause"
+        ]
+
+        assert "id: 1" in lines
+        assert "id: 2" in lines
+
+        data_lines = [
+            line for line in lines
+            if line.startswith("data: ")
+        ]
+
+        assert len(data_lines) == 2
+
+        first_event = json.loads(data_lines[0][6:])
+        second_event = json.loads(data_lines[1][6:])
+
+        assert first_event["event_type"] == "start"
+        assert second_event["event_type"] == "pause"
+
+        assert first_event["session_id"] == session_id
+        assert second_event["session_id"] == session_id
+
+    assert session_id not in event_subscribers
+
+
+# Verify events published while the stream is connected.
+def test_event_stream_receives_live_events():
+    session_id = create_session()
+
+    response = client.post(
+        f"/sessions/{session_id}/events",
+        json={"event_type": "start"}
+    )
+    assert response.status_code == 200
+
+    post_result = {}
+
+    def publish_event():
+        deadline = time.monotonic() + 5
+
+        # Wait until the SSE subscriber is registered.
+        while time.monotonic() < deadline:
+            with idempotency_lock:
+                connected = bool(
+                    event_subscribers.get(session_id)
+                )
+
+            if connected:
                 break
 
-        assert received_start
+            time.sleep(0.01)
 
-        # Publish another event while the stream is connected.
-        post_result = {}
-
-        def publish_event():
-            post_result["response"] = client.post(
-                f"/sessions/{session_id}/events",
-                json={"event_type": "pause"}
+        else:
+            post_result["error"] = (
+                "SSE subscriber was not registered"
             )
+            return
 
-        worker = threading.Thread(target=publish_event)
-        worker.start()
+        try:
+            with TestClient(app) as publisher_client:
+                post_result["response"] = publisher_client.post(
+                    f"/sessions/{session_id}/events",
+                    json={"event_type": "pause"}
+                )
+        except Exception as exc:
+            post_result["error"] = str(exc)
 
-        received_pause = False
+    worker = threading.Thread(
+        target=publish_event,
+        daemon=True
+    )
 
-        for line in lines:
-            if line == "event: pause":
-                received_pause = True
-                break
+    worker.start()
 
+    try:
+        with client.stream(
+            "GET",
+            f"/sessions/{session_id}/events/stream",
+            params={
+                "max_events": 2,
+                "timeout": 10
+            }
+        ) as response:
+
+            assert response.status_code == 200
+
+            lines = list(response.iter_lines())
+
+    finally:
         worker.join(timeout=5)
 
-        assert not worker.is_alive()
-        assert post_result["response"].status_code == 200
-        assert received_pause
+    assert not worker.is_alive()
+    assert "error" not in post_result, post_result.get("error")
+    assert "response" in post_result
+    assert post_result["response"].status_code == 200
+
+    event_lines = [
+        line for line in lines
+        if line.startswith("event: ")
+    ]
+
+    assert event_lines == [
+        "event: start",
+        "event: pause"
+    ]
+
+    assert session_id not in event_subscribers
+
+
+# Verify that an idle stream closes after its timeout.
+def test_event_stream_timeout():
+    session_id = create_session()
+
+    with client.stream(
+        "GET",
+        f"/sessions/{session_id}/events/stream",
+        params={"timeout": 0.2}
+    ) as response:
+
+        assert response.status_code == 200
+
+        lines = list(response.iter_lines())
+
+        assert not any(
+            line.startswith("event: ")
+            for line in lines
+        )
+
+    assert session_id not in event_subscribers
 
 
 def test_event_history_session_not_found():
