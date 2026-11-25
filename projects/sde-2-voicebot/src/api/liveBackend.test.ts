@@ -30,6 +30,8 @@ describe("MockLiveBackend", () => {
       type: "approval",
       payload: {
         message: "Approval requested",
+        action: "Execute the pending action",
+        reason: "This action changes external state.",
         screenContextEnabled: false,
       },
     };
@@ -62,6 +64,8 @@ describe("MockLiveBackend", () => {
       type: "approval",
       payload: {
         message: "Approval requested",
+        action: "Execute the pending action",
+        reason: "This action changes external state.",
         screenContextEnabled: false,
       },
     });

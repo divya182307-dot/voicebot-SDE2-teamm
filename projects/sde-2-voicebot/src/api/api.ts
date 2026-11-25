@@ -2,8 +2,46 @@
 import type { Session, ApiResponse } from '../types/session'
 import { getApiErrorMessage } from './apiError'
 
-const MOCK_MODE = true
-const MOCK_ERROR = false
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '')
+
+async function apiRequest<T>(path: string, init?: RequestInit): Promise<ApiResponse<T>> {
+  try {
+    const response = await fetch(`${API_BASE_URL}${path}`, {
+      headers: { 'Content-Type': 'application/json', ...init?.headers },
+      ...init,
+    })
+
+    const body = await response.json().catch(() => null) as
+      | T
+      | { data?: T; error?: { message?: string } }
+      | null
+
+    if (!response.ok) {
+      const errorBody = body as { error?: { message?: string } } | null
+      return {
+        success: false,
+        error: {
+          message: errorBody?.error?.message || `Request failed with status ${response.status}`,
+          statusCode: response.status,
+        },
+      }
+    }
+
+    const successBody = body as { data?: T } | T | null
+    const data = successBody && typeof successBody === 'object' && 'data' in successBody
+      ? (successBody as { data: T }).data
+      : successBody as T
+
+    return { success: true, data }
+  } catch (error) {
+    return {
+      success: false,
+      error: {
+        message: getApiErrorMessage(error),
+      },
+    }
+  }
+}
 
 export async function mockRequest<T>(
   data: T,
@@ -32,43 +70,41 @@ export async function mockRequest<T>(
 }
 
 export async function startSession(): Promise<ApiResponse<Session>> {
-  if (MOCK_MODE) {
-    return mockRequest(
-      {
-        sessionId: 'mock-session-001',
-        status: 'active',
-        message: 'Session started successfully',
-      },
-      MOCK_ERROR
-    )
+  if (import.meta.env.MODE === 'test') {
+    return mockRequest({
+      sessionId: 'mock-session-001',
+      status: 'active',
+      message: 'Session started successfully',
+    })
   }
 
-  return {
-    success: false,
-    error: {
-      message: 'API server is not configured.',
-      statusCode: 503,
-    },
-  }
+  return apiRequest<Session>('/sessions', { method: 'POST' })
 }
 
-export async function stopSession(): Promise<ApiResponse<Session>> {
-  if (MOCK_MODE) {
-    return mockRequest(
-      {
-        sessionId: 'mock-session-001',
-        status: 'stopped',
-        message: 'Session stopped successfully',
-      },
-      MOCK_ERROR
-    )
+export async function stopSession(sessionId = 'mock-session-001'): Promise<ApiResponse<Session>> {
+  if (import.meta.env.MODE === 'test') {
+    return mockRequest({
+      sessionId,
+      status: 'stopped',
+      message: 'Session stopped successfully',
+    })
   }
 
-  return {
-    success: false,
-    error: {
-      message: 'API server is not configured.',
-      statusCode: 503,
-    },
-  }
+  return apiRequest<Session>(`/sessions/${encodeURIComponent(sessionId)}/stop`, {
+    method: 'POST',
+  })
+}
+
+export async function approveAction(sessionId: string): Promise<ApiResponse<{ decision: 'approved' }>> {
+  return apiRequest<{ decision: 'approved' }>(
+    `/sessions/${encodeURIComponent(sessionId)}/approve`,
+    { method: 'POST' }
+  )
+}
+
+export async function rejectAction(sessionId: string): Promise<ApiResponse<{ decision: 'rejected' }>> {
+  return apiRequest<{ decision: 'rejected' }>(
+    `/sessions/${encodeURIComponent(sessionId)}/reject`,
+    { method: 'POST' }
+  )
 }

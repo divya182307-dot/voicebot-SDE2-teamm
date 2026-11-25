@@ -5,6 +5,80 @@ export type LiveEventHandler = (
   delivery: { replayed: boolean },
 ) => void;
 
+export class RealLiveBackend {
+  private source: EventSource | null = null;
+  private listeners = new Set<LiveEventHandler>();
+  private lastEventId = 0;
+  private connected = false;
+  private sessionId: string;
+
+  constructor(sessionId: string = '') {
+    this.sessionId = sessionId;
+  }
+
+  setSessionId(sessionId: string): void {
+    this.sessionId = sessionId
+  }
+
+  connect(): void {
+    if (typeof EventSource === "undefined") {
+      this.connected = false;
+      return;
+    }
+
+    const baseUrl = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '')
+    const url = `${baseUrl}/sessions/${encodeURIComponent(this.sessionId)}/events`
+
+    if (!this.sessionId) {
+      this.connected = false
+      return
+    }
+
+    this.source = new EventSource(url)
+
+    this.source.onopen = () => {
+      this.connected = true
+    }
+
+    this.source.onmessage = (message) => {
+      const event = JSON.parse(message.data) as SessionEvent
+      const replayed = message.lastEventId
+        ? Number(message.lastEventId) <= this.lastEventId
+        : event.id <= this.lastEventId
+
+      this.lastEventId = Math.max(this.lastEventId, event.id)
+      for (const listener of this.listeners) {
+        listener(event, { replayed })
+      }
+    }
+
+    this.source.onerror = () => {
+      this.connected = false
+    }
+  }
+
+  disconnect(): void {
+    this.source?.close()
+    this.source = null
+    this.connected = false
+  }
+
+  subscribe(handler: LiveEventHandler): () => void {
+    this.listeners.add(handler)
+    return () => this.listeners.delete(handler)
+  }
+
+  reconnect(): number {
+    this.disconnect()
+    this.connect()
+    return 0
+  }
+
+  get isConnected(): boolean {
+    return this.connected
+  }
+}
+
 export class MockLiveBackend {
   private listeners = new Map<LiveEventHandler, number>();
   private events: SessionEvent[] = [];

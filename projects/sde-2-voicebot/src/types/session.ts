@@ -54,7 +54,12 @@ export type SessionEvent =
   | {
       id: number;
       type: "approval";
-      payload: { message: string; screenContextEnabled: boolean };
+      payload: {
+        message: string;
+        action: string;
+        reason: string;
+        screenContextEnabled: boolean;
+      };
     }
   | {
       id: number;

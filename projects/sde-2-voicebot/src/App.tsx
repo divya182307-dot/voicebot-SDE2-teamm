@@ -12,7 +12,13 @@ import type {
   WorkflowStep,
 } from "./types/session";
 import { mockTranscript } from "./fixtures/transcript";
-import { MockLiveBackend } from "./api/liveBackend";
+import { MockLiveBackend, RealLiveBackend } from "./api/liveBackend";
+import {
+  approveAction,
+  rejectAction,
+  startSession,
+  stopSession,
+} from "./api/api";
 import "./App.css";
 
 function App() {
@@ -32,7 +38,9 @@ function App() {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
 
   const [liveConnectionStatus, setLiveConnectionStatus] =
-    useState<LiveConnectionStatus>("connected");
+    useState<LiveConnectionStatus>(
+      import.meta.env.MODE === "test" ? "connected" : "disconnected"
+    );
   const [workflowSteps, setWorkflowSteps] = useState<WorkflowStep[]>([
     { id: "audio", label: "Capture audio", status: "pending" },
     { id: "transcript", label: "Build transcript", status: "pending" },
@@ -43,6 +51,10 @@ function App() {
   const [approvalDecision, setApprovalDecision] = useState("");
   const [approvalScreenContextEnabled, setApprovalScreenContextEnabled] =
     useState(false);
+  const [approvalAction, setApprovalAction] = useState("execute the pending workflow action");
+  const [approvalReason, setApprovalReason] = useState(
+    "The action requires your explicit permission before execution."
+  );
   const [executionCount, setExecutionCount] = useState(0);
   const [replayedEventCount, setReplayedEventCount] = useState(0);
   const [lastEventId, setLastEventId] = useState(0);
@@ -119,18 +131,22 @@ function App() {
   }, [isApprovalOpen]);
 
   const audioLifecycle = useRef<AudioLifecycle | null>(null);
-  const liveBackend = useRef<MockLiveBackend | null>(null);
+  const liveBackend = useRef<MockLiveBackend | RealLiveBackend | null>(null);
   const reconnectTimer = useRef<number | null>(null);
   const recordingStartVersion = useRef(0);
   const approvalDialogRef = useRef<HTMLElement | null>(null);
 
   if (liveBackend.current === null) {
-    liveBackend.current = new MockLiveBackend();
+    liveBackend.current = import.meta.env.MODE === "test"
+      ? new MockLiveBackend()
+      : new RealLiveBackend();
   }
 
   useEffect(() => {
     const backend = liveBackend.current!;
-    backend.connect();
+    if (backend instanceof MockLiveBackend) {
+      backend.connect();
+    }
 
     const unsubscribe = backend.subscribe((event, delivery) => {
       if (event.type === "session") {
@@ -150,6 +166,10 @@ function App() {
         );
       } else if (event.type === "approval") {
         setApprovalScreenContextEnabled(event.payload.screenContextEnabled);
+        setApprovalAction(event.payload.action || event.payload.message);
+        setApprovalReason(
+          event.payload.reason || "This action requires your explicit approval."
+        );
         setIsApprovalOpen(true);
       } else if (event.type === "approval-decision") {
         setApprovalDecision(
@@ -181,15 +201,45 @@ function App() {
   }
 
   const publishWorkflow = (steps: WorkflowStep[]) => {
-    liveBackend.current?.publish({ type: "workflow", payload: steps });
+    if (liveBackend.current instanceof MockLiveBackend) {
+      liveBackend.current.publish({ type: "workflow", payload: steps });
+    }
   };
 
-  // Start session through the mock session/event stream.
-  const handleStart = () => {
-    liveBackend.current?.publish({
-      type: "session",
-      payload: { sessionId: "mock-session-001", status: "active" },
-    });
+  // Start a real session or create the mock session in tests.
+  const handleStart = async () => {
+    setIsLoading(true);
+    setErrorMessage("");
+
+    if (liveBackend.current instanceof MockLiveBackend) {
+      liveBackend.current.publish({
+        type: "session",
+        payload: { sessionId: "mock-session-001", status: "active" },
+      });
+      setIsLoading(false);
+      publishWorkflow([
+        { id: "audio", label: "Capture audio", status: "active" },
+        { id: "transcript", label: "Build transcript", status: "pending" },
+        { id: "reasoning", label: "Generate assistant response", status: "pending" },
+        { id: "approval", label: "Approval review", status: "pending" },
+      ]);
+      return;
+    }
+
+    const response = await startSession();
+    if (!response.success || !response.data) {
+      setErrorMessage(response.error?.message || "Unable to start session.");
+      setIsLoading(false);
+      return;
+    }
+
+    if (liveBackend.current instanceof RealLiveBackend) {
+      setSessionId(response.data.sessionId);
+      liveBackend.current.setSessionId(response.data.sessionId);
+      liveBackend.current.connect();
+      setLiveConnectionStatus("connected");
+    }
+
     publishWorkflow([
       { id: "audio", label: "Capture audio", status: "active" },
       { id: "transcript", label: "Build transcript", status: "pending" },
@@ -198,8 +248,8 @@ function App() {
     ]);
   };
 
-  // Stop recording and session through the mock session/event stream.
-  const handleStop = () => {
+  // Stop recording and the backend session.
+  const handleStop = async () => {
     recordingStartVersion.current += 1;
 
     if (recordingStatus === "recording" || recordingStatus === "paused") {
@@ -207,11 +257,26 @@ function App() {
       setRecordingStatus("stopped");
     }
 
+    setIsLoading(true);
+    setErrorMessage("");
+    const response = await stopSession(sessionId);
+    setIsLoading(false);
+
+    if (!response.success) {
+      setErrorMessage(response.error?.message || "Unable to stop session.");
+      return;
+    }
+
     setIsSessionActive(false);
-    liveBackend.current?.publish({
-      type: "session",
-      payload: { sessionId: "mock-session-001", status: "stopped" },
-    });
+    if (liveBackend.current instanceof MockLiveBackend) {
+      liveBackend.current.publish({
+        type: "session",
+        payload: { sessionId: response.data?.sessionId || sessionId || "mock-session-001", status: "stopped" },
+      });
+    } else {
+      liveBackend.current?.disconnect();
+      setLiveConnectionStatus("disconnected");
+    }
   };
 
   // Start recording.
@@ -314,24 +379,38 @@ function App() {
     }
 
     setApprovalDecision("");
-    liveBackend.current?.publish({
-      type: "approval",
+    if (liveBackend.current instanceof MockLiveBackend) {
+      liveBackend.current.publish({
+        type: "approval",
       payload: {
         message: "The assistant is requesting permission to execute this action.",
+        action: "Execute the pending assistant workflow action",
+        reason: "Execution may produce or change external results, so it requires explicit approval.",
         screenContextEnabled: isScreenContextEnabled,
       },
-    });
+      });
+    }
   };
 
-  const handleApprove = () => {
-    liveBackend.current?.publish({
-      type: "execution",
-      payload: { message: "Approved action execution started." },
-    });
-    liveBackend.current?.publish({
-      type: "approval-decision",
-      payload: { decision: "approved" },
-    });
+  const handleApprove = async () => {
+    if (liveBackend.current instanceof RealLiveBackend && sessionId) {
+      setIsLoading(true);
+      const response = await approveAction(sessionId);
+      setIsLoading(false);
+      if (!response.success) {
+        setErrorMessage(response.error?.message || "Unable to approve action.");
+        return;
+      }
+    } else if (liveBackend.current instanceof MockLiveBackend) {
+      liveBackend.current.publish({
+        type: "execution",
+        payload: { message: "Approved action execution started." },
+      });
+      liveBackend.current.publish({
+        type: "approval-decision",
+        payload: { decision: "approved" },
+      });
+    }
     publishWorkflow(
       workflowSteps.map((step) =>
         step.status === "pending" || step.status === "active"
@@ -341,11 +420,21 @@ function App() {
     );
   };
 
-  const handleReject = () => {
-    liveBackend.current?.publish({
-      type: "approval-decision",
-      payload: { decision: "rejected" },
-    });
+  const handleReject = async () => {
+    if (liveBackend.current instanceof RealLiveBackend && sessionId) {
+      setIsLoading(true);
+      const response = await rejectAction(sessionId);
+      setIsLoading(false);
+      if (!response.success) {
+        setErrorMessage(response.error?.message || "Unable to reject action.");
+        return;
+      }
+    } else if (liveBackend.current instanceof MockLiveBackend) {
+      liveBackend.current.publish({
+        type: "approval-decision",
+        payload: { decision: "rejected" },
+      });
+    }
     publishWorkflow(
       workflowSteps.map((step) =>
         step.status === "active" || step.status === "pending"
@@ -377,10 +466,12 @@ function App() {
       isRevised: false,
     };
 
-    liveBackend.current?.publish({
-      type: "transcript",
-      payload: newMessage,
-    });
+    if (liveBackend.current instanceof MockLiveBackend) {
+      liveBackend.current.publish({
+        type: "transcript",
+        payload: newMessage,
+      });
+    }
   };
 
   // Finalize interim transcript.
@@ -782,8 +873,14 @@ function App() {
             >
               <h2 id="approval-title">Approve or Reject Action</h2>
               <p>
-                Risk: Approving starts the pending workflow action using the
-                transcript{approvalScreenContextEnabled
+                <strong>Action:</strong> {approvalAction}
+              </p>
+              <p>
+                <strong>Why approval is required:</strong> {approvalReason}
+              </p>
+              <p>
+                Risk: Approving starts this action using the transcript
+                {approvalScreenContextEnabled
                   ? " and screen context you explicitly shared."
                   : ". Screen context is disabled and will not be used."}
               </p>
