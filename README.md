@@ -16,3 +16,5 @@ Expected API endpoints:
 - `POST /sessions/{id}/reject` — reject the pending action
 
 SSE messages must contain JSON matching the frontend `SessionEvent` type, with a numeric `id` field. Successful JSON responses may be returned directly or wrapped in `{ "data": ... }`.
+
+Approval events must include an `action` that names the exact operation, a `reason` that explains why it requires consent, and `screenContextEnabled`. These values are shown in the approval dialog; the UI does not infer a generic action or risk description for live events.

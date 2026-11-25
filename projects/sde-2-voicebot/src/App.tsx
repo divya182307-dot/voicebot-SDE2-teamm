@@ -186,12 +186,17 @@ function App() {
         setReplayedEventCount((count) => count + 1);
       }
     });
+    const unsubscribeStatus =
+      backend instanceof RealLiveBackend
+        ? backend.subscribeStatus(setLiveConnectionStatus)
+        : () => {};
 
     return () => {
       if (reconnectTimer.current !== null) {
         window.clearTimeout(reconnectTimer.current);
       }
       unsubscribe();
+      unsubscribeStatus();
       backend.disconnect();
     };
   }, []);
@@ -237,7 +242,6 @@ function App() {
       setSessionId(response.data.sessionId);
       liveBackend.current.setSessionId(response.data.sessionId);
       liveBackend.current.connect();
-      setLiveConnectionStatus("connected");
     }
 
     publishWorkflow([
@@ -246,6 +250,7 @@ function App() {
       { id: "reasoning", label: "Generate assistant response", status: "pending" },
       { id: "approval", label: "Approval review", status: "pending" },
     ]);
+    setIsLoading(false);
   };
 
   // Stop recording and the backend session.
@@ -332,6 +337,11 @@ function App() {
   };
 
   const handleReconnectLiveBackend = () => {
+    if (liveBackend.current instanceof RealLiveBackend) {
+      liveBackend.current.reconnect();
+      return;
+    }
+
     setLiveConnectionStatus("reconnecting");
 
     reconnectTimer.current = window.setTimeout(() => {
@@ -383,9 +393,9 @@ function App() {
       liveBackend.current.publish({
         type: "approval",
       payload: {
-        message: "The assistant is requesting permission to execute this action.",
-        action: "Execute the pending assistant workflow action",
-        reason: "Execution may produce or change external results, so it requires explicit approval.",
+        message: "The assistant is requesting permission to save a study plan.",
+        action: "Save a study plan generated from this session's transcript",
+        reason: "Saving creates persistent study-plan content from your transcript, so review it before it is added to your account.",
         screenContextEnabled: isScreenContextEnabled,
       },
       });
@@ -401,6 +411,8 @@ function App() {
         setErrorMessage(response.error?.message || "Unable to approve action.");
         return;
       }
+      setApprovalDecision("Approved");
+      setIsApprovalOpen(false);
     } else if (liveBackend.current instanceof MockLiveBackend) {
       liveBackend.current.publish({
         type: "execution",
@@ -429,6 +441,8 @@ function App() {
         setErrorMessage(response.error?.message || "Unable to reject action.");
         return;
       }
+      setApprovalDecision("Rejected: execution was not started");
+      setIsApprovalOpen(false);
     } else if (liveBackend.current instanceof MockLiveBackend) {
       liveBackend.current.publish({
         type: "approval-decision",
@@ -879,7 +893,8 @@ function App() {
                 <strong>Why approval is required:</strong> {approvalReason}
               </p>
               <p>
-                Risk: Approving starts this action using the transcript
+                <strong>Risk if approved:</strong> The assistant will perform
+                this action: {approvalAction}, using the transcript
                 {approvalScreenContextEnabled
                   ? " and screen context you explicitly shared."
                   : ". Screen context is disabled and will not be used."}
@@ -893,10 +908,10 @@ function App() {
               </p>
 
               <div className="session-buttons">
-                <button type="button" onClick={handleApprove}>
+                <button type="button" onClick={handleApprove} disabled={isLoading}>
                   Approve
                 </button>
-                <button type="button" onClick={handleReject}>
+                <button type="button" onClick={handleReject} disabled={isLoading}>
                   Reject
                 </button>
               </div>

@@ -8,8 +8,10 @@ export type LiveEventHandler = (
 export class RealLiveBackend {
   private source: EventSource | null = null;
   private listeners = new Set<LiveEventHandler>();
+  private statusListeners = new Set<(status: "connected" | "disconnected" | "reconnecting") => void>();
   private lastEventId = 0;
   private connected = false;
+  private isResuming = false;
   private sessionId: string;
 
   constructor(sessionId: string = '') {
@@ -21,46 +23,54 @@ export class RealLiveBackend {
   }
 
   connect(): void {
+    if (this.source) {
+      return;
+    }
+
     if (typeof EventSource === "undefined") {
-      this.connected = false;
+      this.setConnected(false, "disconnected");
       return;
     }
 
     const baseUrl = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '')
-    const url = `${baseUrl}/sessions/${encodeURIComponent(this.sessionId)}/events`
 
     if (!this.sessionId) {
-      this.connected = false
+      this.setConnected(false, "disconnected");
       return
     }
 
+    const url = `${baseUrl}/sessions/${encodeURIComponent(this.sessionId)}/events`
+    this.setConnected(false, "reconnecting");
     this.source = new EventSource(url)
 
     this.source.onopen = () => {
-      this.connected = true
+      this.setConnected(true, "connected");
     }
 
     this.source.onmessage = (message) => {
       const event = JSON.parse(message.data) as SessionEvent
-      const replayed = message.lastEventId
-        ? Number(message.lastEventId) <= this.lastEventId
-        : event.id <= this.lastEventId
-
-      this.lastEventId = Math.max(this.lastEventId, event.id)
-      for (const listener of this.listeners) {
-        listener(event, { replayed })
+      if (!Number.isInteger(event.id) || event.id <= this.lastEventId) {
+        return;
       }
+
+      this.lastEventId = event.id
+      for (const listener of this.listeners) {
+        listener(event, { replayed: this.isResuming })
+      }
+      this.isResuming = false;
     }
 
     this.source.onerror = () => {
-      this.connected = false
+      this.setConnected(false, "reconnecting");
+      this.isResuming = true;
     }
   }
 
   disconnect(): void {
     this.source?.close()
     this.source = null
-    this.connected = false
+    this.isResuming = false;
+    this.setConnected(false, "disconnected");
   }
 
   subscribe(handler: LiveEventHandler): () => void {
@@ -68,14 +78,34 @@ export class RealLiveBackend {
     return () => this.listeners.delete(handler)
   }
 
+  subscribeStatus(
+    handler: (status: "connected" | "disconnected" | "reconnecting") => void,
+  ): () => void {
+    this.statusListeners.add(handler);
+    return () => this.statusListeners.delete(handler);
+  }
+
   reconnect(): number {
-    this.disconnect()
+    this.source?.close();
+    this.source = null;
+    this.connected = false;
+    this.isResuming = true;
     this.connect()
     return 0
   }
 
   get isConnected(): boolean {
     return this.connected
+  }
+
+  private setConnected(
+    connected: boolean,
+    status: "connected" | "disconnected" | "reconnecting",
+  ): void {
+    this.connected = connected;
+    for (const listener of this.statusListeners) {
+      listener(status);
+    }
   }
 }
 

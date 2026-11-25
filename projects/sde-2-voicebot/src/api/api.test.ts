@@ -1,6 +1,8 @@
 
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import {
+  approveAction,
+  rejectAction,
   startSession,
   stopSession,
   mockRequest,
@@ -33,5 +35,23 @@ describe('API Client Tests', () => {
     expect(response.error?.message).toBe(
       'Something went wrong. Please try again.'
     )
+  })
+
+  it('should call the real session approval and rejection endpoints', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ decision: 'approved' })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ decision: 'rejected' })))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const approved = await approveAction('session/1')
+    const rejected = await rejectAction('session/1')
+
+    expect(approved.data?.decision).toBe('approved')
+    expect(rejected.data?.decision).toBe('rejected')
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      '/sessions/session%2F1/approve',
+      '/sessions/session%2F1/reject',
+    ])
+    vi.unstubAllGlobals()
   })
 })

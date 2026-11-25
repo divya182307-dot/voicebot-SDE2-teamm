@@ -465,8 +465,11 @@ describe('Academia AI Voice Co-Pilot', () => {
 
     expect(screen.getByRole('dialog', { name: 'Approve or Reject Action' })).toBeInTheDocument()
     expect(screen.getByText(/Rejecting records the decision and prevents execution/)).toBeInTheDocument()
-    expect(screen.getByText('Execute the pending assistant workflow action')).toBeInTheDocument()
-    expect(screen.getByText(/Execution may produce or change external results/)).toBeInTheDocument()
+    expect(screen.getByText('Save a study plan generated from this session\'s transcript')).toBeInTheDocument()
+    expect(screen.getByText(/Saving creates persistent study-plan content from your transcript/)).toBeInTheDocument()
+    expect(screen.getByRole('dialog')).toHaveTextContent(
+      'Risk if approved: The assistant will perform this action: Save a study plan generated from this session\'s transcript, using the transcript.'
+    )
     expect(screen.getByText(/Screen context is disabled and will not be used/)).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Reject' }))
