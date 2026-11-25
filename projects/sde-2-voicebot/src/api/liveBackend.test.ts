@@ -7,6 +7,7 @@ class FakeEventSource {
   onopen: ((event: Event) => void) | null = null;
   onmessage: ((event: MessageEvent) => void) | null = null;
   onerror: ((event: Event) => void) | null = null;
+  listeners = new Map<string, EventListener>();
   close = vi.fn();
   readonly url: string;
 
@@ -20,6 +21,14 @@ class FakeEventSource {
       data: JSON.stringify(event),
       lastEventId: String(event.id),
     } as MessageEvent);
+  }
+
+  addEventListener(type: string, listener: EventListener): void {
+    this.listeners.set(type, listener);
+  }
+
+  emitNamed(type: string): void {
+    this.listeners.get(type)?.(new Event(type));
   }
 }
 
@@ -136,13 +145,24 @@ describe("RealLiveBackend", () => {
       type: "workflow",
       payload: [{ id: "audio", label: "Capture audio", status: "complete" }],
     });
+    replaySource.emitNamed("replay-complete");
+    replaySource.emit({
+      id: 3,
+      type: "workflow",
+      payload: [{ id: "audio", label: "Capture audio", status: "complete" }],
+    });
 
-    expect(handler).toHaveBeenCalledTimes(2);
+    expect(handler).toHaveBeenCalledTimes(3);
     expect(handler.mock.calls[1][0].id).toBe(2);
     expect(handler.mock.calls[1][1].replayed).toBe(true);
+    expect(handler.mock.calls[2][1].replayed).toBe(false);
     expect(statuses).toContain("reconnecting");
     expect(statuses.at(-1)).toBe("connected");
     expect(firstSource.close).toHaveBeenCalledOnce();
+
+    backend.setSessionId("new-session");
+    backend.reconnect();
+    expect(FakeEventSource.instances[2].url).not.toContain("?after=");
 
     backend.disconnect();
     vi.unstubAllGlobals();

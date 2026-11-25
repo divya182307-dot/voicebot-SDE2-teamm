@@ -15,6 +15,7 @@ import { mockTranscript } from "./fixtures/transcript";
 import { MockLiveBackend, RealLiveBackend } from "./api/liveBackend";
 import {
   approveAction,
+  publishSessionEvent,
   rejectAction,
   startSession,
   stopSession,
@@ -60,10 +61,9 @@ function App() {
   const [lastEventId, setLastEventId] = useState(0);
   const [sessionId, setSessionId] = useState("");
   const [messages, setMessages] = useState<TranscriptMessage[]>([
-    mockTranscript[0],
-    mockTranscript[1],
-    mockTranscript[2],
-    mockTranscript[4],
+    ...(import.meta.env.MODE === "test"
+      ? [mockTranscript[0], mockTranscript[1], mockTranscript[2], mockTranscript[4]]
+      : []),
   ]);
 
   useEffect(() => {
@@ -205,9 +205,20 @@ function App() {
     audioLifecycle.current = new AudioLifecycle();
   }
 
-  const publishWorkflow = (steps: WorkflowStep[]) => {
+  const publishWorkflow = async (steps: WorkflowStep[], targetSessionId = sessionId) => {
     if (liveBackend.current instanceof MockLiveBackend) {
       liveBackend.current.publish({ type: "workflow", payload: steps });
+      return;
+    }
+
+    if (targetSessionId) {
+      const response = await publishSessionEvent(targetSessionId, {
+        type: "workflow",
+        payload: steps,
+      });
+      if (!response.success) {
+        setErrorMessage(response.error?.message || "Unable to update workflow.");
+      }
     }
   };
 
@@ -222,7 +233,7 @@ function App() {
         payload: { sessionId: "mock-session-001", status: "active" },
       });
       setIsLoading(false);
-      publishWorkflow([
+      await publishWorkflow([
         { id: "audio", label: "Capture audio", status: "active" },
         { id: "transcript", label: "Build transcript", status: "pending" },
         { id: "reasoning", label: "Generate assistant response", status: "pending" },
@@ -244,12 +255,12 @@ function App() {
       liveBackend.current.connect();
     }
 
-    publishWorkflow([
+    await publishWorkflow([
       { id: "audio", label: "Capture audio", status: "active" },
       { id: "transcript", label: "Build transcript", status: "pending" },
       { id: "reasoning", label: "Generate assistant response", status: "pending" },
       { id: "approval", label: "Approval review", status: "pending" },
-    ]);
+    ], response.data.sessionId);
     setIsLoading(false);
   };
 
@@ -302,7 +313,7 @@ function App() {
       setRecordingStatus("recording");
       const currentSteps = workflowSteps;
       if (isSessionActive && currentSteps[0]?.status === "active") {
-        publishWorkflow([
+        await publishWorkflow([
           { ...currentSteps[0], status: "complete" },
           { ...currentSteps[1], status: "active" },
           ...currentSteps.slice(2),
@@ -352,7 +363,7 @@ function App() {
     }, 300);
   };
 
-  const handleAdvanceWorkflow = () => {
+  const handleAdvanceWorkflow = async () => {
     const activeIndex = workflowSteps.findIndex(
       (step) => step.status === "active"
     );
@@ -380,25 +391,34 @@ function App() {
       return step;
     });
 
-    publishWorkflow(updatedSteps);
+    await publishWorkflow(updatedSteps);
   };
 
-  const handleOpenApproval = () => {
+  const handleOpenApproval = async () => {
     if (!workflowSteps.some((step) => step.id === "approval" && step.status === "active")) {
       return;
     }
 
     setApprovalDecision("");
-    if (liveBackend.current instanceof MockLiveBackend) {
-      liveBackend.current.publish({
-        type: "approval",
+    const approvalEvent = {
+      type: "approval" as const,
       payload: {
         message: "The assistant is requesting permission to save a study plan.",
         action: "Save a study plan generated from this session's transcript",
         reason: "Saving creates persistent study-plan content from your transcript, so review it before it is added to your account.",
         screenContextEnabled: isScreenContextEnabled,
       },
-      });
+    };
+
+    if (liveBackend.current instanceof MockLiveBackend) {
+      liveBackend.current.publish(approvalEvent);
+    } else if (sessionId) {
+      const response = await publishSessionEvent(sessionId, approvalEvent);
+      if (!response.success) {
+        setErrorMessage(response.error?.message || "Unable to request approval.");
+      }
+    } else {
+      setErrorMessage("Start a session before requesting approval.");
     }
   };
 
@@ -423,7 +443,7 @@ function App() {
         payload: { decision: "approved" },
       });
     }
-    publishWorkflow(
+    await publishWorkflow(
       workflowSteps.map((step) =>
         step.status === "pending" || step.status === "active"
           ? { ...step, status: "complete" as const }
@@ -449,7 +469,7 @@ function App() {
         payload: { decision: "rejected" },
       });
     }
-    publishWorkflow(
+    await publishWorkflow(
       workflowSteps.map((step) =>
         step.status === "active" || step.status === "pending"
           ? { ...step, status: "rejected" as const }
@@ -484,6 +504,15 @@ function App() {
       liveBackend.current.publish({
         type: "transcript",
         payload: newMessage,
+      });
+    } else if (sessionId) {
+      void publishSessionEvent(sessionId, {
+        type: "transcript",
+        payload: newMessage,
+      }).then((response) => {
+        if (!response.success) {
+          setErrorMessage(response.error?.message || "Unable to publish transcript.");
+        }
       });
     }
   };
@@ -530,12 +559,17 @@ function App() {
           </div>
         )}
 
-        {/* Mock mode */}
+        {/* Backend mode */}
         <div className="mock-banner">
-          <strong>Mock Backend Session and Event Stream Active</strong>
+          <strong>
+            {import.meta.env.MODE === "test"
+              ? "Test Mock Backend Session and Event Stream Active"
+              : "Live Backend API and Event Stream"}
+          </strong>
           <p>
-            Session, workflow, approval, and transcript changes use the
-            typed mock event stream.
+            {import.meta.env.MODE === "test"
+              ? "Tests use an in-memory event stream."
+              : "Session, workflow, approval, and transcript updates use the configured backend."}
           </p>
         </div>
 

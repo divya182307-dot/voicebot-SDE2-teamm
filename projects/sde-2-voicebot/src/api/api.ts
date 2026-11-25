@@ -1,5 +1,5 @@
 
-import type { Session, ApiResponse } from '../types/session'
+import type { NewSessionEvent, Session, ApiResponse } from '../types/session'
 import { getApiErrorMessage } from './apiError'
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '')
@@ -93,6 +93,19 @@ export async function stopSession(sessionId = 'mock-session-001'): Promise<ApiRe
   return apiRequest<Session>(`/sessions/${encodeURIComponent(sessionId)}/stop`, {
     method: 'POST',
   })
+}
+
+export async function publishSessionEvent(
+  sessionId: string,
+  event: Extract<NewSessionEvent, { type: 'workflow' | 'transcript' | 'approval' }>,
+): Promise<ApiResponse<{ event: { id: number } }>> {
+  return apiRequest<{ event: { id: number } }>(
+    `/sessions/${encodeURIComponent(sessionId)}/events`,
+    {
+      method: 'POST',
+      body: JSON.stringify(event),
+    },
+  )
 }
 
 export async function approveAction(sessionId: string): Promise<ApiResponse<{ decision: 'approved' }>> {

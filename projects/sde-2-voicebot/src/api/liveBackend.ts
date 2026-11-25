@@ -19,6 +19,10 @@ export class RealLiveBackend {
   }
 
   setSessionId(sessionId: string): void {
+    if (this.sessionId !== sessionId) {
+      this.lastEventId = 0;
+      this.isResuming = false;
+    }
     this.sessionId = sessionId
   }
 
@@ -39,7 +43,8 @@ export class RealLiveBackend {
       return
     }
 
-    const url = `${baseUrl}/sessions/${encodeURIComponent(this.sessionId)}/events`
+    const resumeQuery = this.lastEventId > 0 ? `?after=${this.lastEventId}` : "";
+    const url = `${baseUrl}/sessions/${encodeURIComponent(this.sessionId)}/events${resumeQuery}`
     this.setConnected(false, "reconnecting");
     this.source = new EventSource(url)
 
@@ -59,6 +64,10 @@ export class RealLiveBackend {
       }
       this.isResuming = false;
     }
+
+    this.source.addEventListener("replay-complete", () => {
+      this.isResuming = false;
+    });
 
     this.source.onerror = () => {
       this.setConnected(false, "reconnecting");

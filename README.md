@@ -1,20 +1,38 @@
-# voicebot-week1-teamm
-AI Voice Co-Pilot - Team Project
+# Academia AI Voice Co-Pilot
 
-## Frontend setup
+Week 3 frontend and local HTTP backend.
 
-The frontend uses a real backend outside test mode and the mock backend under Vitest.
+## Start the backend
 
-Copy `.env.example` to `.env` in `projects/sde-2-voicebot` and set `VITE_API_BASE_URL` to the backend origin.
+From the repository root, install the backend dependencies and start the API:
+
+```bash
+python -m pip install -r projects/sde-2-voicebot/requirements.txt
+python projects/sde-2-voicebot/run_backend.py
+```
+
+The backend listens on `http://127.0.0.1:8001`; its health endpoint is `/health`.
+
+## Start the frontend
+
+In another terminal:
+
+```bash
+cd projects/sde-2-voicebot
+cp .env.example .env
+npm install
+npm run dev
+```
+
+The frontend uses the HTTP backend outside test mode. The in-memory `MockLiveBackend` is selected only by Vitest.
 
 Expected API endpoints:
 
-- `POST /sessions` — create a session
+- `POST /sessions` — create and start a session
 - `POST /sessions/{id}/stop` — stop a session
 - `GET /sessions/{id}/events` — Server-Sent Events stream
+- `POST /sessions/{id}/events` — publish validated workflow, transcript, or approval events
 - `POST /sessions/{id}/approve` — approve the pending action
 - `POST /sessions/{id}/reject` — reject the pending action
 
-SSE messages must contain JSON matching the frontend `SessionEvent` type, with a numeric `id` field. Successful JSON responses may be returned directly or wrapped in `{ "data": ... }`.
-
-Approval events must include an `action` that names the exact operation, a `reason` that explains why it requires consent, and `screenContextEnabled`. These values are shown in the approval dialog; the UI does not infer a generic action or risk description for live events.
+The local backend keeps sessions and events in memory for development. SSE events include monotonically increasing IDs and replay events after reconnect. The `approve` endpoint emits an execution event only for a pending approval; `reject` never executes the action.
