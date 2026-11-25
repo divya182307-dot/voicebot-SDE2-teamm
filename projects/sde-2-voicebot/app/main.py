@@ -1,4 +1,4 @@
-
+﻿
 import uuid
 import json
 import logging
@@ -33,7 +33,8 @@ class JSONFormatter(logging.Formatter):
                 record,
                 "correlation_id",
                 None
-            )
+            ),
+            "session_id": getattr(record, "session_id", None),
         }
 
         return json.dumps(log_data)
@@ -64,7 +65,7 @@ app.add_middleware(RequestIDMiddleware)
 idempotency_store = {}
 event_history = {}
 
-# Active SSE subscribers, grouped by session ID.
+# Active SSE subscribers, grouped by session ID
 event_subscribers = {}
 
 idempotency_lock = Lock()
@@ -240,7 +241,7 @@ def record_event(
 
     events.append(event_record)
 
-    # Notify active subscribers in event order.
+    # Notify active subscribers in event order
     for loop, queue in list(
         event_subscribers.get(session_id, set())
     ):
@@ -348,7 +349,7 @@ def get_session_events(session_id: str):
     }
 
 
-# Live Server-Sent Events endpoint
+# Week 3: Live SSE streaming with event replay and reconnect
 @app.get("/sessions/{session_id}/events/stream")
 async def stream_session_events(
     session_id: str,
@@ -358,15 +359,49 @@ async def stream_session_events(
         default=None,
         gt=0,
         le=300
+    ),
+    last_event_id: int = Query(default=0, ge=0),
+    last_event_id_header: int | None = Header(
+        default=None,
+        alias="Last-Event-ID",
+        ge=0
     )
 ):
+    # Validate session
     if session_repository.get(session_id) is None:
         raise StarletteHTTPException(status_code=404)
+
+    # Prefer the SSE reconnect header over the query parameter
+    replay_cursor = (
+        last_event_id_header
+        if last_event_id_header is not None
+        else last_event_id
+    )
+
+    # Retrieve the latest recorded event ID
+    with idempotency_lock:
+        latest_event_id = len(
+            event_history.get(session_id, [])
+        )
+
+    # Reject cursors that refer to nonexistent future events
+    if replay_cursor > latest_event_id:
+        error = create_error(
+            code="INVALID_EVENT_CURSOR",
+            message="The requested event ID does not exist.",
+            correlation_id=get_correlation_id(request),
+            retryable=False
+        )
+
+        return JSONResponse(
+            status_code=400,
+            content=error.model_dump()
+        )
 
     loop = asyncio.get_running_loop()
     queue = asyncio.Queue()
 
-    # Use a bounded timeout when an event limit is requested.
+    # Use a bounded timeout when an event limit is requested
     effective_timeout = timeout
 
     if max_events is not None and timeout is None:
@@ -382,9 +417,13 @@ async def stream_session_events(
             else None
         )
 
-        # Snapshot history and register subscriber atomically.
+        # Snapshot history and register subscriber atomically
         with idempotency_lock:
-            events = list(event_history.get(session_id, []))
+            events = [
+                event
+                for event in event_history.get(session_id, [])
+                if event["event_id"] > replay_cursor
+            ]
 
             event_subscribers.setdefault(
                 session_id,
@@ -392,7 +431,7 @@ async def stream_session_events(
             ).add(subscriber)
 
         try:
-            # Send previously recorded events first.
+            # Replay previously missed events first
             for event_record in events:
 
                 if deadline is not None and loop.time() >= deadline:
@@ -408,16 +447,16 @@ async def stream_session_events(
 
                 sent_events += 1
 
-                # Close when the requested event limit is reached.
+                # Close when the requested event limit is reached
                 if max_events is not None and sent_events >= max_events:
                     return
 
-            # Continue waiting for newly created events.
+            # Continue waiting for newly created events
             while not await request.is_disconnected():
 
                 wait_time = 15.0
 
-                # Respect the overall stream timeout.
+                # Respect the overall stream timeout
                 if deadline is not None:
                     remaining = deadline - loop.time()
 
@@ -442,21 +481,21 @@ async def stream_session_events(
 
                     sent_events += 1
 
-                    # Close when the event limit is reached.
+                    # Close when the event limit is reached
                     if max_events is not None and sent_events >= max_events:
                         return
 
                 except asyncio.TimeoutError:
 
-                    # Close the stream when its deadline is reached.
+                    # Close the stream when its deadline is reached
                     if deadline is not None and loop.time() >= deadline:
                         return
 
-                    # Keep normal SSE connections alive.
+                    # Keep normal SSE connections alive
                     yield ": keep-alive\n\n"
 
         finally:
-            # Remove disconnected or completed subscribers.
+            # Remove disconnected or completed subscribers
             with idempotency_lock:
                 subscribers = event_subscribers.get(session_id)
 
@@ -474,3 +513,223 @@ async def stream_session_events(
             "X-Accel-Buffering": "no"
         }
     )
+from app.module_health import get_module_health
+
+
+@app.get("/health/modules")
+def module_health():
+    return get_module_health()
+# Week 3 mock session pipeline endpoint
+from app.session_pipeline import SessionPipeline
+from voicebot.device import MockAudioDeviceAdapter
+
+
+@app.post("/sessions/{session_id}/run")
+async def run_session_pipeline(
+    session_id: str,
+    request: Request
+):
+    if session_repository.get(session_id) is None:
+        raise StarletteHTTPException(status_code=404)
+
+    correlation_id = get_correlation_id(request)
+
+    try:
+        pipeline = SessionPipeline(
+            MockAudioDeviceAdapter()
+        )
+
+        return await pipeline.run(
+            session_id=session_id,
+            correlation_id=correlation_id
+        )
+
+    except Exception:
+        error = create_error(
+            code="PIPELINE_FAILED",
+            message="Session processing failed.",
+            correlation_id=correlation_id,
+            retryable=False
+        )
+
+        return JSONResponse(
+            status_code=500,
+            content=error.model_dump()
+        )
+
+# Week 3 workflow and approval endpoints
+
+from app.gateways.reasoning_gateway import ReasoningGateway
+from app.gateways.workflow_gateway import (
+    WorkflowGateway,
+    build_workflow_plan
+)
+from threading import Lock
+
+active_workflows = {}
+workflow_lock = Lock()
+
+
+def workflow_response(gateway, result=None):
+
+    return {
+        "session_id": gateway.plan.session_id,
+        "correlation_id": gateway.plan.correlation_id,
+        "plan_id": gateway.plan.plan_id,
+        "status": gateway.plan.state.value,
+        "pending_approvals": [
+            approval.model_dump(mode="json")
+            for approval in gateway.pending_approvals().values()
+            if approval.status.value == "pending"
+        ],
+        "result": (
+            result.model_dump(mode="json")
+            if hasattr(result, "model_dump")
+            else None
+        )
+    }
+
+
+@app.post("/sessions/{session_id}/workflow")
+def start_session_workflow(
+    session_id: str,
+    request: Request,
+    transcript: str = Query(..., min_length=1, max_length=4000)
+):
+
+    if session_repository.get(session_id) is None:
+        raise StarletteHTTPException(status_code=404)
+
+    correlation_id = get_correlation_id(request)
+
+    with workflow_lock:
+
+        existing = active_workflows.get(session_id)
+
+        if existing and existing.plan.state.value not in {
+            "succeeded", "failed", "cancelled"
+        }:
+            raise StarletteHTTPException(status_code=409)
+
+        try:
+            reasoning = ReasoningGateway().reason(
+                session_id,
+                correlation_id,
+                transcript
+            )
+
+            if not reasoning.action_plan:
+                return {
+                    "session_id": session_id,
+                    "correlation_id": correlation_id,
+                    "status": "completed",
+                    "requires_user_approval": False
+                }
+
+            plan = build_workflow_plan(
+                reasoning,
+                session_id,
+                correlation_id
+            )
+
+            gateway = WorkflowGateway(plan)
+            result = gateway.execute()
+
+            active_workflows[session_id] = gateway
+
+            return workflow_response(gateway, result)
+
+        except (ValueError, KeyError, PermissionError):
+
+            error = create_error(
+                code="WORKFLOW_VALIDATION_FAILED",
+                message="The workflow action is not permitted.",
+                correlation_id=correlation_id,
+                retryable=False
+            )
+
+            return JSONResponse(
+                status_code=400,
+                content=error.model_dump()
+            )
+
+
+@app.get("/sessions/{session_id}/workflow")
+def get_session_workflow(session_id: str):
+
+    with workflow_lock:
+
+        gateway = active_workflows.get(session_id)
+
+        if gateway is None:
+            raise StarletteHTTPException(status_code=404)
+
+        gateway.executor.check_for_expired_approvals()
+
+        return workflow_response(gateway)
+
+
+@app.post(
+    "/sessions/{session_id}/approvals/{approval_id}/approve"
+)
+def approve_session_workflow(
+    session_id: str,
+    approval_id: str
+):
+
+    with workflow_lock:
+
+        gateway = active_workflows.get(session_id)
+
+        if (
+            gateway is None
+            or session_repository.get(session_id) is None
+        ):
+            raise StarletteHTTPException(status_code=404)
+
+        gateway.executor.check_for_expired_approvals()
+
+        approval = gateway.pending_approvals().get(approval_id)
+
+        if approval is None:
+            raise StarletteHTTPException(status_code=404)
+
+        if approval.status.value != "pending":
+            raise StarletteHTTPException(status_code=409)
+
+        result = gateway.approve(approval_id)
+
+        return workflow_response(gateway, result)
+
+
+@app.post(
+    "/sessions/{session_id}/approvals/{approval_id}/reject"
+)
+def reject_session_workflow(
+    session_id: str,
+    approval_id: str
+):
+
+    with workflow_lock:
+
+        gateway = active_workflows.get(session_id)
+
+        if (
+            gateway is None
+            or session_repository.get(session_id) is None
+        ):
+            raise StarletteHTTPException(status_code=404)
+
+        gateway.executor.check_for_expired_approvals()
+
+        approval = gateway.pending_approvals().get(approval_id)
+
+        if approval is None:
+            raise StarletteHTTPException(status_code=404)
+
+        if approval.status.value != "pending":
+            raise StarletteHTTPException(status_code=409)
+
+        result = gateway.reject(approval_id)
+
+        return workflow_response(gateway, result)
