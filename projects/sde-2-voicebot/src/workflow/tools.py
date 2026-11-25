@@ -3,14 +3,14 @@ Mock Tools and Tool Registry for Academiaai AI Voicebot Agentic Workflow.
 Workstream: W4 (Agentic Workflow) - Team SDE 2
 Author: Karthik N M
 
-Day 3-4 Deliverable:
-Provides two harmless mock tools with no external sending, and a ToolRegistry.
+Week 1 (Days 3-4): Provides two harmless mock tools with no external sending, and a ToolRegistry.
+Week 2 (Days 8-9): Allow-listed tool registry with strict argument validation and permission scope checks.
 Everything runs in mock mode (safe, deterministic, sandboxed execution).
 """
 
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Set
 from uuid import uuid4
 
 from src.workflow.schemas import RiskLevel, ToolFailureBehavior, ToolSpec
@@ -19,7 +19,7 @@ from src.workflow.schemas import RiskLevel, ToolFailureBehavior, ToolSpec
 class BaseTool(ABC):
     """
     Abstract base class for all tools in the agentic workflow.
-    Each tool exposes a ToolSpec and an execute method.
+    Each tool exposes a ToolSpec, argument validation, permission enforcement, and an execute method.
     """
 
     def __init__(self, spec: ToolSpec):
@@ -39,14 +39,46 @@ class BaseTool(ABC):
 
     def validate_arguments(self, arguments: Dict[str, Any]) -> None:
         """
-        Validates arguments against the required properties in input_schema.
-        Raises ValueError if required arguments are missing or invalid.
+        Validates arguments against the required properties and expected types in input_schema.
+        Raises ValueError if required arguments are missing or argument types are invalid.
         """
         required = self.spec.input_schema.get("required", [])
         for field in required:
             if field not in arguments:
                 raise ValueError(
                     f"Tool '{self.name}' missing required argument: '{field}'"
+                )
+
+        properties = self.spec.input_schema.get("properties", {})
+        for field, value in arguments.items():
+            if field in properties:
+                prop_info = properties[field]
+                expected_type = prop_info.get("type")
+                if expected_type == "string" and not isinstance(value, str):
+                    raise ValueError(f"Tool '{self.name}' argument '{field}' must be a string, got {type(value).__name__}")
+                elif expected_type == "integer" and (not isinstance(value, int) or isinstance(value, bool)):
+                    raise ValueError(f"Tool '{self.name}' argument '{field}' must be an integer, got {type(value).__name__}")
+                elif expected_type == "number" and (not isinstance(value, (int, float)) or isinstance(value, bool)):
+                    raise ValueError(f"Tool '{self.name}' argument '{field}' must be a number, got {type(value).__name__}")
+                elif expected_type == "boolean" and not isinstance(value, bool):
+                    raise ValueError(f"Tool '{self.name}' argument '{field}' must be a boolean, got {type(value).__name__}")
+                elif expected_type == "array" and not isinstance(value, list):
+                    raise ValueError(f"Tool '{self.name}' argument '{field}' must be a list/array, got {type(value).__name__}")
+                elif expected_type == "object" and not isinstance(value, dict):
+                    raise ValueError(f"Tool '{self.name}' argument '{field}' must be an object/dict, got {type(value).__name__}")
+
+    def check_permissions(self, granted_permissions: Optional[Iterable[str]]) -> None:
+        """
+        Enforces permission scopes.
+        Raises PermissionError if any required permission is not present in granted_permissions.
+        """
+        if granted_permissions is None:
+            return
+        granted_set = set(granted_permissions)
+        for req in self.spec.permission_requirements:
+            if req not in granted_set:
+                raise PermissionError(
+                    f"Tool '{self.name}' requires permission '{req}', but caller only holds: {sorted(list(granted_set))}"
                 )
 
     @abstractmethod
@@ -270,7 +302,8 @@ class MockCourseScheduleTool(BaseTool):
 class ToolRegistry:
     """
     Registry maintaining allow-listed tools for the agentic workflow engine.
-    Ensures safe tool discovery, schema introspection, and execution routing.
+    Ensures safe tool discovery, schema introspection, permission scope checks,
+    and execution routing. Unknown tools are strictly rejected.
     """
 
     def __init__(self):
@@ -283,9 +316,9 @@ class ToolRegistry:
         self._tools[tool.name] = tool
 
     def get(self, name: str) -> BaseTool:
-        """Retrieves a registered tool by name."""
+        """Retrieves a registered tool by name. Raises KeyError if not registered."""
         if name not in self._tools:
-            raise KeyError(f"Tool '{name}' is not registered in the tool registry.")
+            raise KeyError(f"Tool '{name}' is not registered in the allow-list.")
         return self._tools[name]
 
     def has(self, name: str) -> bool:
@@ -299,6 +332,36 @@ class ToolRegistry:
     def list_specs(self) -> List[ToolSpec]:
         """Returns ToolSpec for all registered tools."""
         return [tool.spec for tool in self._tools.values()]
+
+    def validate_tool_call(
+        self,
+        name: str,
+        arguments: Dict[str, Any],
+        caller_permissions: Optional[Iterable[str]] = None,
+    ) -> None:
+        """
+        Validates tool presence in allow-list, argument validity, and permission scopes.
+        Raises KeyError if tool not registered.
+        Raises PermissionError if caller lacks required permissions.
+        Raises ValueError if arguments fail schema validation.
+        """
+        if not self.has(name):
+            raise KeyError(f"Tool '{name}' is not registered in the allow-list.")
+        tool = self.get(name)
+        tool.check_permissions(caller_permissions)
+        tool.validate_arguments(arguments)
+
+    def execute(
+        self,
+        name: str,
+        arguments: Dict[str, Any],
+        caller_permissions: Optional[Iterable[str]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Safely executes an allow-listed tool after checking permissions and argument validity.
+        """
+        self.validate_tool_call(name, arguments, caller_permissions)
+        return self.get(name).execute(arguments)
 
     @classmethod
     def get_default_registry(cls) -> "ToolRegistry":

@@ -15,16 +15,24 @@ from src.voice.adapter import (
 )
 from src.voice.exceptions import (
     AccumulatorError,
+    AudioPreprocessingError,
     DuplicateSegmentError,
     InvalidConfidenceError,
     InvalidEventError,
     InvalidTimeRangeError,
+    OrchestratorError,
+    OrchestratorStateError,
+    RetryExhaustedError,
     SchemaValidationError,
     SessionMismatchError,
     TranscriberAudioError,
+    TranscriberAuthenticationError,
     TranscriberConnectionError,
     TranscriberError,
+    TranscriberRateLimitError,
+    TranscriberServiceUnavailableError,
     TranscriberStateError,
+    TranscriberTimeoutError,
     VoiceError,
 )
 from src.voice.fake_transcriber import (
@@ -42,6 +50,34 @@ from src.voice.fixtures import (
     out_of_order_final_events,
     single_utterance_events,
 )
+from src.voice.orchestrator import (
+    OrchestratorConfig,
+    OrchestratorMetrics,
+    OrchestratorState,
+    TranscriptionOrchestrator,
+)
+from src.voice.preprocessing import (
+    AudioPreprocessor,
+    AudioPreprocessorConfig,
+    AudioPreprocessorMetrics,
+    convert_stereo_to_mono,
+    normalize_amplitude_pcm16,
+    resample_pcm16,
+)
+from src.voice.reconciliation import (
+    ReconciliationConfig,
+    ReconciliationMetrics,
+    TranscriptReconciler,
+)
+from src.voice.resilience import (
+    ErrorNormalizer,
+    ResilienceMetrics,
+    ResilientTranscriberWrapper,
+    RetryConfig,
+    RetryPolicy,
+    TimeoutConfig,
+    TimeoutPolicy,
+)
 from src.voice.schemas import (
     TranscriptError,
     TranscriptEvent,
@@ -58,12 +94,20 @@ __all__ = [
     "InvalidConfidenceError",
     "TranscriberError",
     "TranscriberConnectionError",
+    "TranscriberTimeoutError",
+    "TranscriberRateLimitError",
+    "TranscriberAuthenticationError",
+    "TranscriberServiceUnavailableError",
     "TranscriberStateError",
     "TranscriberAudioError",
     "AccumulatorError",
     "SessionMismatchError",
     "InvalidEventError",
     "DuplicateSegmentError",
+    "OrchestratorError",
+    "OrchestratorStateError",
+    "AudioPreprocessingError",
+    "RetryExhaustedError",
     # Data Contracts & Schemas
     "WordTiming",
     "TranscriptSegment",
@@ -86,6 +130,30 @@ __all__ = [
     "AccumulatorConfig",
     "AccumulatedTranscript",
     "SegmentAccumulator",
+    # Transcription Orchestrator (Days 8-9)
+    "OrchestratorState",
+    "OrchestratorMetrics",
+    "OrchestratorConfig",
+    "TranscriptionOrchestrator",
+    # Reconciliation & Deduplication (Days 10-11)
+    "ReconciliationConfig",
+    "ReconciliationMetrics",
+    "TranscriptReconciler",
+    # Audio Preprocessing (Days 12-13)
+    "resample_pcm16",
+    "convert_stereo_to_mono",
+    "normalize_amplitude_pcm16",
+    "AudioPreprocessorConfig",
+    "AudioPreprocessorMetrics",
+    "AudioPreprocessor",
+    # Resilience & Error Normalization (Days 12-13)
+    "RetryConfig",
+    "TimeoutConfig",
+    "ResilienceMetrics",
+    "ErrorNormalizer",
+    "RetryPolicy",
+    "TimeoutPolicy",
+    "ResilientTranscriberWrapper",
     # Test Fixtures & Generators
     "make_segment",
     "make_event",

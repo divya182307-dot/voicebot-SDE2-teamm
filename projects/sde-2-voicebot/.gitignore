@@ -1,7 +1,9 @@
-# Python cache
 __pycache__/
 *.py[cod]
-*$py.class
-
-# Pytest cache
 .pytest_cache/
+.venv/
+node_modules/
+dist/
+coverage/
+.env
+*.log

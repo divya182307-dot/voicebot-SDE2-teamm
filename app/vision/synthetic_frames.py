@@ -16,6 +16,9 @@ import uuid
 
 from app.schemas.common import BoundingBox, CaptureMode
 from app.schemas.context import ScreenContext
+DEFAULT_FIXED_TIMESTAMP: datetime = datetime(2026, 10, 26, 12, 0, 0, tzinfo=timezone.utc)
+DEFAULT_FIXED_UID: str = "00000000"
+
 
 
 class SyntheticScenario(str, Enum):
@@ -80,7 +83,7 @@ class ScreenCaptureManager:
     ) -> ScreenContext:
         """
         Captures or generates a synthetic screen frame.
-        
+
         Args:
             scenario: Preset synthetic scenario to generate.
             allow_fallback_when_disabled: If True, returns a safe redacted placeholder frame

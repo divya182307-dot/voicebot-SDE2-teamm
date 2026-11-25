@@ -1,0 +1,55 @@
+
+import type { TranscriptMessage } from "../types/session";
+
+export const mockTranscript: TranscriptMessage[] = [
+  {
+    id: 1,
+    speaker: "Student",
+    text: "Hello, can you explain artificial intelligence?",
+    timestamp: "10:00 AM",
+    type: "final",
+    confidence: 0.98,
+    revision: 1,
+    isRevised: false,
+  },
+  {
+    id: 2,
+    speaker: "AI Assistant",
+    text: "Artificial intelligence allows machines to perform tasks that normally require human intelligence.",
+    timestamp: "10:01 AM",
+    type: "final",
+    confidence: 0.96,
+    revision: 1,
+    isRevised: false,
+  },
+  {
+    id: 3,
+    speaker: "Student",
+    text: "Can you give me a simple example?",
+    timestamp: "10:02 AM",
+    type: "final",
+    confidence: 0.95,
+    revision: 1,
+    isRevised: false,
+  },
+  {
+    id: 4,
+    speaker: "AI Assistant",
+    text: "A voice assistant that answers your questions is an example of artificial intelligence.",
+    timestamp: "10:03 AM",
+    type: "final",
+    confidence: 0.97,
+    revision: 2,
+    isRevised: true,
+  },
+  {
+    id: 5,
+    speaker: "Student",
+    text: "Artificial intelligence is useful in daily life.",
+    timestamp: "10:04 AM",
+    type: "interim",
+    confidence: 0.78,
+    revision: 1,
+    isRevised: false,
+  },
+];

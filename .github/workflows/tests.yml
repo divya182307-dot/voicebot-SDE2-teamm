@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - integration-week1
+      - integration-week2
   pull_request:
     branches:
       - main
@@ -21,13 +22,29 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install project
+      - name: Install project and backend dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
+          python -m pip install -r projects/sde-2-voicebot/requirements.txt
 
       - name: Run root tests
         run: python -m pytest tests/ -q
 
-      - name: Run SDE-2 tests
-        run: python -m pytest projects/sde-2-voicebot/tests/ -q
+      - name: Run SDE-2 backend tests
+        env:
+          PYTHONPATH: projects/sde-2-voicebot
+        run: |
+          python -m pytest --rootdir=projects/sde-2-voicebot projects/sde-2-voicebot/tests/ -q --ignore=projects/sde-2-voicebot/tests/test_api.py
+
+      - name: Run SDE-2 API tests
+        env:
+          PYTHONPATH: projects/sde-2-voicebot
+        run: |
+          python -m pytest --rootdir=projects/sde-2-voicebot projects/sde-2-voicebot/tests/test_api.py -q
+
+      - name: Run Agentic Week 2 tests
+        env:
+          PYTHONPATH: projects/sde-2-voicebot
+        run: |
+          python -m pytest --rootdir=projects/sde-2-voicebot projects/sde-2-voicebot/agentic_week2/tests/ -q

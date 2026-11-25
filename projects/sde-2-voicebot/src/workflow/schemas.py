@@ -3,12 +3,13 @@ Agentic Workflow Schemas for Academiaai AI Voicebot.
 Workstream: W4 (Agentic Workflow) - Team SDE 2
 Author: Karthik N M
 
-Day 1-2 Deliverable:
-Defines WorkflowPlan, WorkflowStep, ToolSpec, ApprovalRequest, and WorkflowResult schemas,
-along with RiskLevel and WorkflowState enums per PRD specifications.
+Week 1 (Days 1-2): WorkflowPlan, WorkflowStep, ToolSpec, ApprovalRequest, WorkflowResult,
+                   RiskLevel and WorkflowState enums per PRD specifications.
+Week 2 (Days 8-9): Added RetryPolicy, timeout_seconds, is_idempotent on WorkflowStep;
+                   TTL-based expiry (ttl_seconds, expires_at) on ApprovalRequest.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
@@ -61,6 +62,15 @@ class ToolFailureBehavior(str, Enum):
     IGNORE_AND_CONTINUE = "ignore_and_continue"
 
 
+class RetryPolicy(BaseModel):
+    """
+    Retry policy for idempotent steps.
+    """
+    max_retries: int = Field(default=3, ge=0, le=10, description="Maximum retry attempts")
+    backoff_seconds: float = Field(default=0.05, ge=0.0, description="Base backoff delay in seconds")
+    retry_on_exceptions: List[str] = Field(default_factory=lambda: ["Exception"], description="Exception class names to retry")
+
+
 class ToolSpec(BaseModel):
     """
     Specification for allow-listed tools in the agentic workflow.
@@ -110,6 +120,9 @@ class WorkflowStep(BaseModel):
     status: StepStatus = Field(default=StepStatus.PENDING, description="Current status of the step")
     result: Optional[Any] = Field(default=None, description="Result output if completed")
     error_message: Optional[str] = Field(default=None, description="Error message if step failed")
+    timeout_seconds: Optional[float] = Field(default=None, ge=0.0, description="Step execution timeout in seconds")
+    retry_policy: Optional[RetryPolicy] = Field(default=None, description="Bounded retry policy for idempotent failures")
+    is_idempotent: bool = Field(default=True, description="Whether executing this step multiple times produces the same outcome")
 
     @model_validator(mode="after")
     def enforce_consequential_approval_rule(self) -> "WorkflowStep":
@@ -137,8 +150,25 @@ class ApprovalRequest(BaseModel):
     target_resources: List[str] = Field(default_factory=list, description="Files, directories, or endpoints affected")
     status: ApprovalStatus = Field(default=ApprovalStatus.PENDING, description="Current approval status")
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="Creation timestamp")
+    ttl_seconds: Optional[float] = Field(default=None, ge=0.0, description="Time to live for this approval request in seconds")
+    expires_at: Optional[datetime] = Field(default=None, description="Absolute expiration timestamp")
     decided_at: Optional[datetime] = Field(default=None, description="Timestamp of user decision")
     rejection_reason: Optional[str] = Field(default=None, description="Reason if rejected")
+
+    @model_validator(mode="after")
+    def calculate_expiration(self) -> "ApprovalRequest":
+        if self.ttl_seconds is not None and self.expires_at is None:
+            self.expires_at = self.created_at + timedelta(seconds=self.ttl_seconds)
+        return self
+
+    def is_expired(self, current_time: Optional[datetime] = None) -> bool:
+        """Checks if the approval request has expired."""
+        if self.status == ApprovalStatus.EXPIRED:
+            return True
+        if self.expires_at is None:
+            return False
+        now = current_time or datetime.now(timezone.utc)
+        return now > self.expires_at
 
 
 class WorkflowPlan(BaseModel):
