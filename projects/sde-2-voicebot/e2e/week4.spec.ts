@@ -33,6 +33,10 @@ test.describe("Week 4 demo journeys", () => {
     await expect(page.getByText("Actions executed: 1")).toBeVisible();
     await page.getByRole("button", { name: "Stop Session" }).click();
     await expect(page.getByText("Session Status: stopped")).toBeVisible();
+    await page.screenshot({
+      path: "test-results/week4-demo.png",
+      fullPage: true,
+    });
     expect(backendRequests).toBe(0);
   });
 
