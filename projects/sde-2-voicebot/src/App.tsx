@@ -23,6 +23,9 @@ import {
 import "./App.css";
 
 function App() {
+  const isDemoMode =
+    import.meta.env.MODE === "test" ||
+    new URLSearchParams(window.location.search).get("demo") === "1";
   const [isSessionActive, setIsSessionActive] = useState(false);
 
   const [recordingStatus, setRecordingStatus] =
@@ -40,7 +43,7 @@ function App() {
 
   const [liveConnectionStatus, setLiveConnectionStatus] =
     useState<LiveConnectionStatus>(
-      import.meta.env.MODE === "test" ? "connected" : "disconnected"
+      isDemoMode ? "connected" : "disconnected"
     );
   const [workflowSteps, setWorkflowSteps] = useState<WorkflowStep[]>([
     { id: "audio", label: "Capture audio", status: "pending" },
@@ -61,7 +64,7 @@ function App() {
   const [lastEventId, setLastEventId] = useState(0);
   const [sessionId, setSessionId] = useState("");
   const [messages, setMessages] = useState<TranscriptMessage[]>([
-    ...(import.meta.env.MODE === "test"
+    ...(isDemoMode
       ? [mockTranscript[0], mockTranscript[1], mockTranscript[2], mockTranscript[4]]
       : []),
   ]);
@@ -137,7 +140,7 @@ function App() {
   const approvalDialogRef = useRef<HTMLElement | null>(null);
 
   if (liveBackend.current === null) {
-    liveBackend.current = import.meta.env.MODE === "test"
+    liveBackend.current = isDemoMode
       ? new MockLiveBackend()
       : new RealLiveBackend();
   }
@@ -222,7 +225,7 @@ function App() {
     }
   };
 
-  // Start a real session or create the mock session in tests.
+  // Demo mode and tests use the in-memory backend; normal app mode uses HTTP/SSE.
   const handleStart = async () => {
     setIsLoading(true);
     setErrorMessage("");
@@ -275,6 +278,20 @@ function App() {
 
     setIsLoading(true);
     setErrorMessage("");
+
+    if (liveBackend.current instanceof MockLiveBackend) {
+      liveBackend.current.publish({
+        type: "session",
+        payload: {
+          sessionId: sessionId || "mock-session-001",
+          status: "stopped",
+        },
+      });
+      setIsSessionActive(false);
+      setIsLoading(false);
+      return;
+    }
+
     const response = await stopSession(sessionId);
     setIsLoading(false);
 
@@ -284,15 +301,8 @@ function App() {
     }
 
     setIsSessionActive(false);
-    if (liveBackend.current instanceof MockLiveBackend) {
-      liveBackend.current.publish({
-        type: "session",
-        payload: { sessionId: response.data?.sessionId || sessionId || "mock-session-001", status: "stopped" },
-      });
-    } else {
-      liveBackend.current?.disconnect();
-      setLiveConnectionStatus("disconnected");
-    }
+    liveBackend.current?.disconnect();
+    setLiveConnectionStatus("disconnected");
   };
 
   // Start recording.
@@ -539,6 +549,15 @@ function App() {
       <header className="app-header">
         <h1>Academia AI Voice Co-Pilot</h1>
         <p>Your AI-powered academic voice assistant</p>
+        {isDemoMode ? (
+          <a className="demo-link" href="/">
+            Return to live mode
+          </a>
+        ) : (
+          <a className="demo-link" href="?demo=1">
+            Try demo mode
+          </a>
+        )}
       </header>
 
       <main className="app-main">
@@ -562,13 +581,13 @@ function App() {
         {/* Backend mode */}
         <div className="mock-banner">
           <strong>
-            {import.meta.env.MODE === "test"
-              ? "Test Mock Backend Session and Event Stream Active"
+            {isDemoMode
+              ? "Demo Mode: Mock Session and Event Stream"
               : "Live Backend API and Event Stream"}
           </strong>
           <p>
-            {import.meta.env.MODE === "test"
-              ? "Tests use an in-memory event stream."
+            {isDemoMode
+              ? "The complete workflow runs on sample data without a backend or API keys."
               : "Session, workflow, approval, and transcript updates use the configured backend."}
           </p>
         </div>
@@ -577,7 +596,7 @@ function App() {
         <section className="session-section">
           <h2>Session Controls</h2>
 
-          <p>
+          <p role="status" aria-live="polite" aria-atomic="true">
             Session Status:{" "}
             {isSessionActive ? "active" : "stopped"}
           </p>
@@ -601,13 +620,8 @@ function App() {
             </button>
           </div>
 
-          {isSessionActive && (
-            <p role="status">Session started successfully</p>
-          )}
-
-          {!isSessionActive && (
-            <p role="status">Session stopped successfully</p>
-          )}
+          {isSessionActive && <p role="status">Session started successfully</p>}
+          {!isSessionActive && <p role="status">Session stopped successfully</p>}
         </section>
 
         {/* Voice recording controls */}
@@ -723,7 +737,12 @@ function App() {
         {/* Workflow progress */}
         <section className="workflow-section">
           <h2>Workflow Progress</h2>
-          <ol className="workflow-list" aria-live="polite">
+          <ol
+            className="workflow-list"
+            aria-label="Workflow step statuses"
+            aria-live="polite"
+            aria-relevant="additions text"
+          >
             {workflowSteps.map((step) => (
               <li key={step.id}>
                 <span>{step.label}</span>
@@ -852,42 +871,49 @@ function App() {
             Transcript Timeline ({messages.length} messages)
           </h2>
 
-          {messages.map((message) => (
-            <article
-              key={message.id}
-              className="transcript-message"
-            >
-              <h3>{message.speaker}</h3>
+          <div
+            className="transcript-list"
+            aria-label="Transcript messages"
+            aria-live="polite"
+            aria-relevant="additions text"
+          >
+            {messages.map((message) => (
+              <article
+                key={message.id}
+                className="transcript-message"
+              >
+                <h3>{message.speaker}</h3>
 
-              <p>{message.text}</p>
+                <p>{message.text}</p>
 
-              <p>
-                <strong>Time:</strong> {message.timestamp}
-              </p>
-
-              <p>
-                <strong>Transcript Type:</strong>{" "}
-                {message.type === "interim" ? "Interim" : "Final"}
-              </p>
-
-              <p>
-                <strong>Confidence:</strong>{" "}
-                {Math.round(message.confidence * 100)}%
-              </p>
-
-              <p>
-                <strong>Revision:</strong> {message.revision}
-              </p>
-
-              {message.isRevised && (
                 <p>
-                  <strong>Revised Transcript</strong>
+                  <strong>Time:</strong> {message.timestamp}
                 </p>
-              )}
 
-              <hr />
-            </article>
-          ))}
+                <p>
+                  <strong>Transcript Type:</strong>{" "}
+                  {message.type === "interim" ? "Interim" : "Final"}
+                </p>
+
+                <p>
+                  <strong>Confidence:</strong>{" "}
+                  {Math.round(message.confidence * 100)}%
+                </p>
+
+                <p>
+                  <strong>Revision:</strong> {message.revision}
+                </p>
+
+                {message.isRevised && (
+                  <p>
+                    <strong>Revised Transcript</strong>
+                  </p>
+                )}
+
+                <hr />
+              </article>
+            ))}
+          </div>
 
           <button
             type="button"
@@ -918,15 +944,16 @@ function App() {
               role="dialog"
               aria-modal="true"
               aria-labelledby="approval-title"
+              aria-describedby="approval-details approval-reason approval-risk"
             >
               <h2 id="approval-title">Approve or Reject Action</h2>
-              <p>
+              <p id="approval-details">
                 <strong>Action:</strong> {approvalAction}
               </p>
-              <p>
+              <p id="approval-reason">
                 <strong>Why approval is required:</strong> {approvalReason}
               </p>
-              <p>
+              <p id="approval-risk">
                 <strong>Risk if approved:</strong> The assistant will perform
                 this action: {approvalAction}, using the transcript
                 {approvalScreenContextEnabled
