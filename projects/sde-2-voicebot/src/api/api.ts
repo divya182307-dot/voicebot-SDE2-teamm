@@ -3,12 +3,20 @@ import type { NewSessionEvent, Session, ApiResponse } from '../types/session'
 import { getApiErrorMessage } from './apiError'
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '')
+const REQUEST_TIMEOUT_MS = Number(import.meta.env.VITE_API_TIMEOUT_MS) || 10000;
 
 async function apiRequest<T>(path: string, init?: RequestInit): Promise<ApiResponse<T>> {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(
+    () => controller.abort(),
+    REQUEST_TIMEOUT_MS,
+  );
+
   try {
     const response = await fetch(`${API_BASE_URL}${path}`, {
       headers: { 'Content-Type': 'application/json', ...init?.headers },
       ...init,
+      signal: controller.signal,
     })
 
     const body = await response.json().catch(() => null) as
@@ -37,9 +45,13 @@ async function apiRequest<T>(path: string, init?: RequestInit): Promise<ApiRespo
     return {
       success: false,
       error: {
-        message: getApiErrorMessage(error),
+        message: controller.signal.aborted
+          ? `Request timed out after ${REQUEST_TIMEOUT_MS} ms. Check the backend and try again.`
+          : getApiErrorMessage(error),
       },
     }
+  } finally {
+    window.clearTimeout(timeout);
   }
 }
 
