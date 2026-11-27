@@ -1,4 +1,4 @@
-﻿
+
 import uuid
 import json
 import logging
@@ -539,10 +539,30 @@ async def run_session_pipeline(
             MockAudioDeviceAdapter()
         )
 
-        return await pipeline.run(
+        result = await pipeline.run(
             session_id=session_id,
             correlation_id=correlation_id
         )
+
+        if pipeline.workflow is not None:
+            with workflow_lock:
+                existing = active_workflows.get(session_id)
+
+                if existing and existing.plan.state.value not in {
+                    "succeeded", "failed", "cancelled"
+                }:
+                    return JSONResponse(
+                        status_code=409,
+                        content=create_error(
+                            code="WORKFLOW_ALREADY_ACTIVE",
+                            message="A workflow is already active.",
+                            correlation_id=correlation_id
+                        ).model_dump()
+                    )
+
+                active_workflows[session_id] = pipeline.workflow
+
+        return result
 
     except Exception:
         error = create_error(

@@ -19,7 +19,13 @@ from app.repository import session_repository
 from app.config import settings, load_settings
 
 
-client = TestClient(app)
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def configure_authenticated_client(authenticated_client):
+    global client
+    client = authenticated_client
 
 
 def setup_function():
@@ -350,7 +356,7 @@ def test_event_stream_receives_live_events():
             return
 
         try:
-            with TestClient(app) as publisher_client:
+            with TestClient(app, headers=dict(client.headers)) as publisher_client:
                 post_result["response"] = publisher_client.post(
                     f"/sessions/{session_id}/events",
                     json={"event_type": "pause"}

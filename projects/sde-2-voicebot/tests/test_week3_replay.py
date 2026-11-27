@@ -4,7 +4,13 @@ from fastapi.testclient import TestClient
 from app.main import app
 
 
-client = TestClient(app)
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def configure_authenticated_client(authenticated_client):
+    global client
+    client = authenticated_client
 
 
 def create_test_session():
