@@ -175,4 +175,42 @@ test.describe("Week 4 demo journeys", () => {
     await expect(page.getByText("Last event received: 1")).toBeVisible();
     expect(startRequests).toBe(2);
   });
+
+  test("a successful session start stays active when the event stream is unavailable", async ({ page }) => {
+    await page.route("**/sessions", async (route) => {
+      if (route.request().method() !== "POST") {
+        await route.fallback();
+        return;
+      }
+
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          sessionId: "signal-lost-session",
+          status: "active",
+          message: "Session started successfully",
+        }),
+      });
+    });
+    await page.route("**/sessions/signal-lost-session/events", async (route) => {
+      if (route.request().method() === "GET") {
+        await route.abort();
+        return;
+      }
+
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ event: { id: 2 } }),
+      });
+    });
+
+    await page.goto("/");
+    await page.getByRole("button", { name: "Start Session" }).click();
+
+    await expect(page.getByText("Session Status: active")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Start Session" })).toBeDisabled();
+    await expect(page.getByText("Session ID: signal-lost-session")).toBeVisible();
+  });
 });

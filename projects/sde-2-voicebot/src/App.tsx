@@ -253,6 +253,7 @@ function App() {
     }
 
     if (liveBackend.current instanceof RealLiveBackend) {
+      setIsSessionActive(response.data.status === "active");
       setSessionId(response.data.sessionId);
       liveBackend.current.setSessionId(response.data.sessionId);
       liveBackend.current.connect();
